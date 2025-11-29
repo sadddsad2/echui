@@ -85,7 +85,7 @@ typedef struct {
 } Config;
 
 Config currentConfig = {
-    "https://1.1.1.1/dns-query", "cloudflare-ech.com", "example.com:443", "", "127.0.0.1:30000", 3, ""
+    "dns.alidns.com/dns-query", "cloudflare-ech.com", "example.com:443", "", "127.0.0.1:30000", 3, ""
 };
 
 // 函数声明
@@ -447,8 +447,8 @@ void CreateControls(HWND hwnd) {
     innerY += lineHeight + lineGap;
 
     // 5. 指定IP 和 DNS
-    CreateLabelAndEdit(hwnd, "指定IP:", margin + Scale(15), innerY, halfW, editH, ID_IP_EDIT, &hIpEdit, FALSE);
-    CreateLabelAndEdit(hwnd, "DNS服务器:", col2X, innerY, halfW, editH, ID_DNS_EDIT, &hDnsEdit, FALSE);
+    CreateLabelAndEdit(hwnd, "指定IP(域名):", margin + Scale(15), innerY, halfW, editH, ID_IP_EDIT, &hIpEdit, FALSE);
+    CreateLabelAndEdit(hwnd, "DNS服务器(DOH仅可用域名):", col2X, innerY, halfW, editH, ID_DNS_EDIT, &hDnsEdit, FALSE);
     innerY += lineHeight + lineGap;
 
     // 6. ECH
