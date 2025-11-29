@@ -37,7 +37,6 @@ int Scale(int x) {
     return (x * g_scale) / 100;
 }
 
-#define ID_CONFIG_NAME_EDIT 1000
 #define ID_SERVER_EDIT      1001
 #define ID_LISTEN_EDIT      1002
 #define ID_TOKEN_EDIT       1003
@@ -52,7 +51,7 @@ int Scale(int x) {
 #define ID_LOAD_CONFIG_BTN  1015
 
 HWND hMainWindow;
-HWND hConfigNameEdit, hServerEdit, hListenEdit, hTokenEdit, hIpEdit, hDnsEdit, hEchEdit;
+HWND hServerEdit, hListenEdit, hTokenEdit, hIpEdit, hDnsEdit, hEchEdit;
 HWND hStartBtn, hStopBtn, hLogEdit, hSaveConfigBtn, hLoadConfigBtn;
 PROCESS_INFORMATION processInfo;
 HANDLE hLogPipe = NULL;
@@ -355,15 +354,10 @@ void CreateControls(HWND hwnd) {
     int editH = Scale(26);
     int curY = margin;
 
-    // 配置名称
-    HWND hConfigLabel = CreateWindow("STATIC", "配置名称:", WS_VISIBLE | WS_CHILD | SS_LEFT, 
-        margin, curY + Scale(3), Scale(80), Scale(20), hwnd, NULL, NULL, NULL);
-    SendMessage(hConfigLabel, WM_SETFONT, (WPARAM)hFontUI, TRUE);
-
-    hConfigNameEdit = CreateWindow("EDIT", "", WS_VISIBLE | WS_CHILD | WS_TABSTOP | WS_BORDER | ES_AUTOHSCROLL,
-        margin + Scale(90), curY, Scale(200), editH, hwnd, (HMENU)ID_CONFIG_NAME_EDIT, NULL, NULL);
-    SendMessage(hConfigNameEdit, WM_SETFONT, (WPARAM)hFontUI, TRUE);
-    SendMessage(hConfigNameEdit, EM_SETLIMITTEXT, MAX_SMALL_LEN, 0);
+    // 只显示节点名称标签
+    HWND hNodeLabel = CreateWindow("STATIC", "节点名称:", WS_VISIBLE | WS_CHILD | SS_LEFT, 
+        margin, curY + Scale(3), Scale(200), Scale(20), hwnd, NULL, NULL, NULL);
+    SendMessage(hNodeLabel, WM_SETFONT, (WPARAM)hFontUI, TRUE);
 
     curY += lineHeight + Scale(5);
 
@@ -414,12 +408,10 @@ void CreateControls(HWND hwnd) {
     SendMessage(hStopBtn, WM_SETFONT, (WPARAM)hFontUI, TRUE);
     EnableWindow(hStopBtn, FALSE);
 
-    // 保存配置按钮
     hSaveConfigBtn = CreateWindow("BUTTON", "保存配置", WS_VISIBLE | WS_CHILD | BS_PUSHBUTTON,
         startX + (btnW + btnGap) * 2, curY, btnW, btnH, hwnd, (HMENU)ID_SAVE_CONFIG_BTN, NULL, NULL);
     SendMessage(hSaveConfigBtn, WM_SETFONT, (WPARAM)hFontUI, TRUE);
 
-    // 加载配置按钮
     hLoadConfigBtn = CreateWindow("BUTTON", "加载配置", WS_VISIBLE | WS_CHILD | BS_PUSHBUTTON,
         startX + (btnW + btnGap) * 3, curY, btnW, btnH, hwnd, (HMENU)ID_LOAD_CONFIG_BTN, NULL, NULL);
     SendMessage(hLoadConfigBtn, WM_SETFONT, (WPARAM)hFontUI, TRUE);
@@ -445,7 +437,6 @@ void CreateControls(HWND hwnd) {
 
 void GetControlValues() {
     char buf[MAX_URL_LEN];
-    GetWindowText(hConfigNameEdit, currentConfig.configName, sizeof(currentConfig.configName));
     GetWindowText(hServerEdit, buf, sizeof(buf));
     strcpy(currentConfig.server, buf);
 
@@ -459,7 +450,6 @@ void GetControlValues() {
 }
 
 void SetControlValues() {
-    SetWindowText(hConfigNameEdit, currentConfig.configName);
     SetWindowText(hServerEdit, currentConfig.server);
     SetWindowText(hListenEdit, currentConfig.listen);
     SetWindowText(hTokenEdit, currentConfig.token);
@@ -500,12 +490,11 @@ void StartProcess() {
         APPEND_ARG("-dns", currentConfig.dns);
     }
     
-    // 检测DNS是否为IP格式，如果是则添加 -insecure-dns 参数
     if (strlen(currentConfig.dns) > 0) {
         char* firstChar = currentConfig.dns;
         if (*firstChar >= '0' && *firstChar <= '9') {
             strcat(cmdLine, " -insecure-dns");
-            AppendLog("[提示] 检测到IP格式DNS，已自动跳过TLS证书验证\r\n");
+            AppendLog("[提示] 检测到IP格式DNS,已自动跳过TLS证书验证\r\n");
         }
     }
     
