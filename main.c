@@ -81,7 +81,7 @@ typedef struct {
 } Config;
 
 Config currentConfig = {
-    "223.5.5.5/dns-query", "cloudflare-ech.com", "example.com:443", "", "127.0.0.1:30000", ""
+    "dns.alidns.com/dns-query", "cloudflare-ech.com", "example.com:443", "", "127.0.0.1:30000", ""
 };
 
 // 函数声明
@@ -341,14 +341,14 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam) 
 
 void CreateLabelAndEdit(HWND parent, const char* labelText, int x, int y, int w, int h, int editId, HWND* outEdit, BOOL numberOnly) {
     HWND hStatic = CreateWindow("STATIC", labelText, WS_VISIBLE | WS_CHILD | SS_LEFT, 
-        x, y + Scale(3), Scale(100), Scale(20), parent, NULL, NULL, NULL);
+        x, y + Scale(3), Scale(140), Scale(20), parent, NULL, NULL, NULL);
     SendMessage(hStatic, WM_SETFONT, (WPARAM)hFontUI, TRUE);
 
     DWORD style = WS_VISIBLE | WS_CHILD | WS_TABSTOP | WS_BORDER | ES_AUTOHSCROLL;
     if (numberOnly) style |= ES_NUMBER | ES_CENTER;
 
     *outEdit = CreateWindow("EDIT", "", style, 
-        x + Scale(110), y, w - Scale(110), h, parent, (HMENU)(intptr_t)editId, NULL, NULL);
+        x + Scale(150), y, w - Scale(150), h, parent, (HMENU)(intptr_t)editId, NULL, NULL);
     SendMessage(*outEdit, WM_SETFONT, (WPARAM)hFontUI, TRUE);
     SendMessage(*outEdit, EM_SETLIMITTEXT, (editId == ID_SERVER_EDIT || editId == ID_TOKEN_EDIT) ? MAX_URL_LEN : MAX_SMALL_LEN, 0);
 }
@@ -400,8 +400,8 @@ void CreateControls(HWND hwnd) {
     CreateLabelAndEdit(hwnd, "ECH域名:", margin + Scale(15), innerY, groupW - Scale(30), editH, ID_ECH_EDIT, &hEchEdit, FALSE);
     innerY += lineHeight + lineGap;
 
-    // 6. DNS服务器 - 移到ECH下方
-    CreateLabelAndEdit(hwnd, "DNS服务器(IP/域名):", margin + Scale(15), innerY, groupW - Scale(30), editH, ID_DNS_EDIT, &hDnsEdit, FALSE);
+    // 6. DNS服务器 - 移到ECH下方，说明支持域名格式
+    CreateLabelAndEdit(hwnd, "DNS服务器(域名):", margin + Scale(15), innerY, groupW - Scale(30), editH, ID_DNS_EDIT, &hDnsEdit, FALSE);
 
     curY += group2H + Scale(15);
 
@@ -494,7 +494,7 @@ void StartProcess() {
     }
     
     // 只有当值不是默认值时才添加参数
-    if (strlen(currentConfig.dns) > 0 && strcmp(currentConfig.dns, "223.5.5.5/dns-query") != 0) {
+    if (strlen(currentConfig.dns) > 0 && strcmp(currentConfig.dns, "dns.alidns.com/dns-query") != 0) {
         APPEND_ARG("-dns", currentConfig.dns);
     }
     
