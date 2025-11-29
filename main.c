@@ -55,9 +55,6 @@ int Scale(int x) {
 #define ID_IP_EDIT          1004
 #define ID_DNS_EDIT         1005
 #define ID_ECH_EDIT         1006
-#define ID_CONN_EDIT        1007
-#define ID_CONN_UP          1008
-#define ID_CONN_DOWN        1009
 #define ID_START_BTN        1010
 #define ID_STOP_BTN         1011
 #define ID_CLEAR_LOG_BTN    1012
@@ -66,7 +63,7 @@ int Scale(int x) {
 // 全局变量
 HWND hMainWindow;
 HWND hServerEdit, hListenEdit, hTokenEdit, hIpEdit, hDnsEdit, hEchEdit;
-HWND hConnEdit, hStartBtn, hStopBtn, hLogEdit;
+HWND hStartBtn, hStopBtn, hLogEdit;
 PROCESS_INFORMATION processInfo;
 HANDLE hLogPipe = NULL;
 HANDLE hLogThread = NULL;
@@ -80,12 +77,11 @@ typedef struct {
     char server[MAX_URL_LEN];    
     char ip[MAX_SMALL_LEN];      
     char listen[MAX_SMALL_LEN];  
-    int connections;
     char token[MAX_URL_LEN];     
 } Config;
 
 Config currentConfig = {
-    "dns.alidns.com/dns-query", "cloudflare-ech.com", "example.com:443", "", "127.0.0.1:30000", 3, ""
+    "223.5.5.5/dns-query", "cloudflare-ech.com", "example.com:443", "", "127.0.0.1:30000", ""
 };
 
 // 函数声明
@@ -318,28 +314,6 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam) 
                 case ID_CLEAR_LOG_BTN:
                     SetWindowText(hLogEdit, "");
                     break;
-
-                case ID_CONN_UP: {
-                    char buf[16];
-                    GetWindowText(hConnEdit, buf, 16);
-                    int val = atoi(buf);
-                    if (val < 20) {
-                        sprintf(buf, "%d", val + 1);
-                        SetWindowText(hConnEdit, buf);
-                    }
-                    break;
-                }
-
-                case ID_CONN_DOWN: {
-                    char buf[16];
-                    GetWindowText(hConnEdit, buf, 16);
-                    int val = atoi(buf);
-                    if (val > 1) {
-                        sprintf(buf, "%d", val - 1);
-                        SetWindowText(hConnEdit, buf);
-                    }
-                    break;
-                }
             }
             break;
 
@@ -390,69 +364,44 @@ void CreateControls(HWND hwnd) {
     int editH = Scale(26);
     int curY = margin;
 
-    // 核心配置
-    int group1H = Scale(110);
+    // 核心配置 - 调整高度,因为去掉了并发连接
+    int group1H = Scale(80);
     HWND hGroup1 = CreateWindow("BUTTON", "核心配置", WS_VISIBLE | WS_CHILD | BS_GROUPBOX,
         margin, curY, groupW, group1H, hwnd, NULL, NULL, NULL);
     SendMessage(hGroup1, WM_SETFONT, (WPARAM)hFontUI, TRUE);
     
     int innerY = curY + Scale(25);
-    
-    // 计算半宽时的间距处理
-    int midGap = Scale(20); 
-    // 这里的公式是: (总宽度 - 两边padding - 中间间距) / 2
-    int halfW = (groupW - Scale(30) - midGap) / 2; 
-    
-    // 第二列的起始X坐标
-    int col2X = margin + Scale(15) + halfW + midGap;
 
     // 1. 服务地址
     CreateLabelAndEdit(hwnd, "服务地址:", margin + Scale(15), innerY, groupW - Scale(30), editH, ID_SERVER_EDIT, &hServerEdit, FALSE);
     innerY += lineHeight + lineGap;
 
-    // 2. 监听地址
-    CreateLabelAndEdit(hwnd, "监听地址:", margin + Scale(15), innerY, halfW, editH, ID_LISTEN_EDIT, &hListenEdit, FALSE);
-    
-    // 3. 并发连接 (使用计算好的 col2X)
-    HWND hLbl = CreateWindow("STATIC", "并发连接:", WS_VISIBLE | WS_CHILD, col2X, innerY + Scale(3), Scale(80), Scale(20), hwnd, NULL, NULL, NULL);
-    SendMessage(hLbl, WM_SETFONT, (WPARAM)hFontUI, TRUE);
-
-    int btnSize = Scale(26);
-    int numW = Scale(50);
-    int numX = col2X + Scale(85);
-
-    hConnEdit = CreateWindow("EDIT", "3", WS_VISIBLE | WS_CHILD | WS_BORDER | ES_NUMBER | ES_CENTER, 
-        numX, innerY, numW, editH, hwnd, (HMENU)ID_CONN_EDIT, NULL, NULL);
-    SendMessage(hConnEdit, WM_SETFONT, (WPARAM)hFontUI, TRUE);
-
-    HWND hBtnDown = CreateWindow("BUTTON", "-", WS_VISIBLE | WS_CHILD | BS_PUSHBUTTON, 
-        numX + numW + Scale(5), innerY, btnSize, editH, hwnd, (HMENU)ID_CONN_DOWN, NULL, NULL);
-    SendMessage(hBtnDown, WM_SETFONT, (WPARAM)hFontUI, TRUE);
-
-    HWND hBtnUp = CreateWindow("BUTTON", "+", WS_VISIBLE | WS_CHILD | BS_PUSHBUTTON, 
-        numX + numW + Scale(5) + btnSize + Scale(5), innerY, btnSize, editH, hwnd, (HMENU)ID_CONN_UP, NULL, NULL);
-    SendMessage(hBtnUp, WM_SETFONT, (WPARAM)hFontUI, TRUE);
+    // 2. 监听地址 - 现在占据整行
+    CreateLabelAndEdit(hwnd, "监听地址:", margin + Scale(15), innerY, groupW - Scale(30), editH, ID_LISTEN_EDIT, &hListenEdit, FALSE);
 
     curY += group1H + Scale(15);
 
-    // 高级选项
+    // 高级选项 - 调整高度,增加了DNS行
     int group2H = Scale(155);
     HWND hGroup2 = CreateWindow("BUTTON", "高级选项 (可选)", WS_VISIBLE | WS_CHILD | BS_GROUPBOX,
         margin, curY, groupW, group2H, hwnd, NULL, NULL, NULL);
     SendMessage(hGroup2, WM_SETFONT, (WPARAM)hFontUI, TRUE);
     innerY = curY + Scale(25);
 
-    // 4. 身份令牌
+    // 3. 身份令牌
     CreateLabelAndEdit(hwnd, "身份令牌:", margin + Scale(15), innerY, groupW - Scale(30), editH, ID_TOKEN_EDIT, &hTokenEdit, FALSE);
     innerY += lineHeight + lineGap;
 
-    // 5. 指定IP 和 DNS
-    CreateLabelAndEdit(hwnd, "优选IP(域名):", margin + Scale(15), innerY, halfW, editH, ID_IP_EDIT, &hIpEdit, FALSE);
-    CreateLabelAndEdit(hwnd, "DNS服务器(域名/dns-query):", col2X, innerY, halfW, editH, ID_DNS_EDIT, &hDnsEdit, FALSE);
+    // 4. 指定IP
+    CreateLabelAndEdit(hwnd, "优选IP(域名):", margin + Scale(15), innerY, groupW - Scale(30), editH, ID_IP_EDIT, &hIpEdit, FALSE);
     innerY += lineHeight + lineGap;
 
-    // 6. ECH
+    // 5. ECH域名
     CreateLabelAndEdit(hwnd, "ECH域名:", margin + Scale(15), innerY, groupW - Scale(30), editH, ID_ECH_EDIT, &hEchEdit, FALSE);
+    innerY += lineHeight + lineGap;
+
+    // 6. DNS服务器 - 移到ECH下方
+    CreateLabelAndEdit(hwnd, "DNS服务器(IP/域名):", margin + Scale(15), innerY, groupW - Scale(30), editH, ID_DNS_EDIT, &hDnsEdit, FALSE);
 
     curY += group2H + Scale(15);
 
@@ -503,11 +452,6 @@ void GetControlValues() {
     GetWindowText(hIpEdit, currentConfig.ip, sizeof(currentConfig.ip));
     GetWindowText(hDnsEdit, currentConfig.dns, sizeof(currentConfig.dns));
     GetWindowText(hEchEdit, currentConfig.ech, sizeof(currentConfig.ech));
-
-    char connBuf[32];
-    GetWindowText(hConnEdit, connBuf, 32);
-    currentConfig.connections = atoi(connBuf);
-    if (currentConfig.connections < 1) currentConfig.connections = 1;
 }
 
 void SetControlValues() {
@@ -517,10 +461,6 @@ void SetControlValues() {
     SetWindowText(hIpEdit, currentConfig.ip);
     SetWindowText(hDnsEdit, currentConfig.dns);
     SetWindowText(hEchEdit, currentConfig.ech);
-
-    char connBuf[32];
-    sprintf(connBuf, "%d", currentConfig.connections);
-    SetWindowText(hConnEdit, connBuf);
 }
 
 void StartProcess() {
@@ -554,7 +494,7 @@ void StartProcess() {
     }
     
     // 只有当值不是默认值时才添加参数
-    if (strlen(currentConfig.dns) > 0 && strcmp(currentConfig.dns, "119.29.29.29:53") != 0) {
+    if (strlen(currentConfig.dns) > 0 && strcmp(currentConfig.dns, "223.5.5.5/dns-query") != 0) {
         APPEND_ARG("-dns", currentConfig.dns);
     }
     
@@ -670,9 +610,9 @@ void AppendLog(const char* text) {
 void SaveConfig() {
     FILE* f = fopen("config.ini", "w");
     if (!f) return;
-    fprintf(f, "[ECHTunnel]\nserver=%s\nlisten=%s\ntoken=%s\nip=%s\ndns=%s\nech=%s\nconnections=%d\n",
+    fprintf(f, "[ECHTunnel]\nserver=%s\nlisten=%s\ntoken=%s\nip=%s\ndns=%s\nech=%s\n",
         currentConfig.server, currentConfig.listen, currentConfig.token, 
-        currentConfig.ip, currentConfig.dns, currentConfig.ech, currentConfig.connections);
+        currentConfig.ip, currentConfig.dns, currentConfig.ech);
     fclose(f);
 }
 
@@ -692,7 +632,6 @@ void LoadConfig() {
         else if (!strcmp(line, "ip")) strcpy(currentConfig.ip, val);
         else if (!strcmp(line, "dns")) strcpy(currentConfig.dns, val);
         else if (!strcmp(line, "ech")) strcpy(currentConfig.ech, val);
-        else if (!strcmp(line, "connections")) currentConfig.connections = atoi(val);
     }
     fclose(f);
 }
