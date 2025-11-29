@@ -18,7 +18,7 @@ typedef BOOL (WINAPI *SetProcessDPIAwareFunc)(void);
 
 // 版本信息
 #define APP_VERSION "1.0"
-#define APP_TITLE "ECH Tunnel 客户端 v" APP_VERSION
+#define APP_TITLE "ECH workers 客户端 v" APP_VERSION
 
 // 缓冲区大小定义
 #define MAX_URL_LEN 8192
