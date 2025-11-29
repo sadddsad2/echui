@@ -7,48 +7,37 @@
 #include <stdlib.h>
 #include <string.h>
 
-// Unique name for Mutex
 #define SINGLE_INSTANCE_MUTEX_NAME "ECHWorkerClient_Mutex_Unique_ID"
-
-// 图标资源 ID
 #define IDI_APP_ICON 101 
 
-// 声明 DPI 感知函数
 typedef BOOL (WINAPI *SetProcessDPIAwareFunc)(void);
 
-// 版本信息
 #define APP_VERSION "1.0"
 #define APP_TITLE "ECH workers 客户端 v" APP_VERSION
 
-// 缓冲区大小定义
 #define MAX_URL_LEN 8192
 #define MAX_SMALL_LEN 2048
 #define MAX_CMD_LEN 32768
 
-// 消息定义
 #define WM_TRAYICON (WM_USER + 1)
 #define WM_APPEND_LOG (WM_USER + 2) 
 
-// 托盘菜单ID
 #define ID_TRAY_ICON 9001
 #define ID_TRAY_OPEN 9002
 #define ID_TRAY_EXIT 9003
 
-// 字体与绘图对象
 HFONT hFontUI = NULL;    
 HFONT hFontLog = NULL;   
 HBRUSH hBrushLog = NULL;
 
-// DPI 感知
 int g_dpi = 96;
 int g_scale = 100;
 
-// 缩放函数
 int Scale(int x) {
     return (x * g_scale) / 100;
 }
 
-// 窗口控件ID定义
+#define ID_CONFIG_NAME_EDIT 1000
 #define ID_SERVER_EDIT      1001
 #define ID_LISTEN_EDIT      1002
 #define ID_TOKEN_EDIT       1003
@@ -59,19 +48,20 @@ int Scale(int x) {
 #define ID_STOP_BTN         1011
 #define ID_CLEAR_LOG_BTN    1012
 #define ID_LOG_EDIT         1013
+#define ID_SAVE_CONFIG_BTN  1014
+#define ID_LOAD_CONFIG_BTN  1015
 
-// 全局变量
 HWND hMainWindow;
-HWND hServerEdit, hListenEdit, hTokenEdit, hIpEdit, hDnsEdit, hEchEdit;
-HWND hStartBtn, hStopBtn, hLogEdit;
+HWND hConfigNameEdit, hServerEdit, hListenEdit, hTokenEdit, hIpEdit, hDnsEdit, hEchEdit;
+HWND hStartBtn, hStopBtn, hLogEdit, hSaveConfigBtn, hLoadConfigBtn;
 PROCESS_INFORMATION processInfo;
 HANDLE hLogPipe = NULL;
 HANDLE hLogThread = NULL;
 BOOL isProcessRunning = FALSE;
 NOTIFYICONDATA nid;
 
-// 配置结构体
 typedef struct {
+    char configName[MAX_SMALL_LEN];
     char dns[MAX_SMALL_LEN];     
     char ech[MAX_SMALL_LEN];     
     char server[MAX_URL_LEN];    
@@ -81,10 +71,9 @@ typedef struct {
 } Config;
 
 Config currentConfig = {
-    "dns.alidns.com/dns-query", "cloudflare-ech.com", "example.com:443", "", "127.0.0.1:30000", ""
+    "默认配置", "223.5.5.5/dns-query", "cloudflare-ech.com", "example.com:443", "", "127.0.0.1:30000", ""
 };
 
-// 函数声明
 LRESULT CALLBACK WindowProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam);
 void CreateControls(HWND hwnd);
 void StartProcess();
@@ -94,6 +83,8 @@ void AppendLogAsync(const char* text);
 DWORD WINAPI LogReaderThread(LPVOID lpParam);
 void SaveConfig();
 void LoadConfig();
+void SaveConfigToFile();
+void LoadConfigFromFile();
 void GetControlValues();
 void SetControlValues();
 void InitTrayIcon(HWND hwnd);
@@ -103,22 +94,15 @@ void RemoveTrayIcon();
 int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine, int nCmdShow) {
     (void)hPrevInstance; (void)lpCmdLine;
     
-    // --- 单实例检查开始 ---
     HANDLE hMutex = CreateMutex(NULL, TRUE, SINGLE_INSTANCE_MUTEX_NAME);
-
-    // 检查互斥体是否已经存在
     if (hMutex != NULL && GetLastError() == ERROR_ALREADY_EXISTS) {
-        // 找到已运行的实例窗口
         HWND hExistingWnd = FindWindow("ECHWorkerClient", NULL); 
         if (hExistingWnd) {
-            // 发送消息,让已运行的实例窗口显示
             PostMessage(hExistingWnd, WM_TRAYICON, ID_TRAY_ICON, WM_LBUTTONUP);
         }
-        // 关闭互斥体句柄并退出新实例
         CloseHandle(hMutex);
         return 0; 
     }
-    // --- 单实例检查结束 ---
     
     HMODULE hUser32 = LoadLibrary("user32.dll");
     if (hUser32) {
@@ -150,7 +134,7 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
     WNDCLASS wc = {0};
     wc.lpfnWndProc = WindowProc;
     wc.hInstance = hInstance;
-    wc.lpszClassName = "ECHWorkerClient"; // Class Name used by FindWindow
+    wc.lpszClassName = "ECHWorkerClient";
     wc.hbrBackground = (HBRUSH)(COLOR_BTNFACE + 1); 
     wc.hCursor = LoadCursor(NULL, IDC_ARROW);
     
@@ -191,9 +175,7 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
         }
     }
     
-    // (Optional) Release mutex ownership when the first instance exits
     CloseHandle(hMutex); 
-
     return (int)msg.wParam;
 }
 
@@ -235,10 +217,9 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam) 
 
         case WM_TRAYICON:
             if (lParam == WM_LBUTTONUP) {
-                // 托盘点击或第二个实例发送的消息会触发此逻辑
                 ShowWindow(hwnd, SW_RESTORE);
                 SetForegroundWindow(hwnd);
-                RemoveTrayIcon(); // 恢复后移除托盘图标
+                RemoveTrayIcon();
             } 
             else if (lParam == WM_RBUTTONUP) {
                 POINT pt;
@@ -314,6 +295,16 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam) 
                 case ID_CLEAR_LOG_BTN:
                     SetWindowText(hLogEdit, "");
                     break;
+
+                case ID_SAVE_CONFIG_BTN:
+                    GetControlValues();
+                    SaveConfigToFile();
+                    break;
+
+                case ID_LOAD_CONFIG_BTN:
+                    LoadConfigFromFile();
+                    SetControlValues();
+                    break;
             }
             break;
 
@@ -364,7 +355,18 @@ void CreateControls(HWND hwnd) {
     int editH = Scale(26);
     int curY = margin;
 
-    // 核心配置 - 调整高度,因为去掉了并发连接
+    // 配置名称
+    HWND hConfigLabel = CreateWindow("STATIC", "配置名称:", WS_VISIBLE | WS_CHILD | SS_LEFT, 
+        margin, curY + Scale(3), Scale(80), Scale(20), hwnd, NULL, NULL, NULL);
+    SendMessage(hConfigLabel, WM_SETFONT, (WPARAM)hFontUI, TRUE);
+
+    hConfigNameEdit = CreateWindow("EDIT", "", WS_VISIBLE | WS_CHILD | WS_TABSTOP | WS_BORDER | ES_AUTOHSCROLL,
+        margin + Scale(90), curY, Scale(200), editH, hwnd, (HMENU)ID_CONFIG_NAME_EDIT, NULL, NULL);
+    SendMessage(hConfigNameEdit, WM_SETFONT, (WPARAM)hFontUI, TRUE);
+    SendMessage(hConfigNameEdit, EM_SETLIMITTEXT, MAX_SMALL_LEN, 0);
+
+    curY += lineHeight + Scale(5);
+
     int group1H = Scale(80);
     HWND hGroup1 = CreateWindow("BUTTON", "核心配置", WS_VISIBLE | WS_CHILD | BS_GROUPBOX,
         margin, curY, groupW, group1H, hwnd, NULL, NULL, NULL);
@@ -372,40 +374,32 @@ void CreateControls(HWND hwnd) {
     
     int innerY = curY + Scale(25);
 
-    // 1. 服务地址
     CreateLabelAndEdit(hwnd, "服务地址:", margin + Scale(15), innerY, groupW - Scale(30), editH, ID_SERVER_EDIT, &hServerEdit, FALSE);
     innerY += lineHeight + lineGap;
 
-    // 2. 监听地址 - 现在占据整行
     CreateLabelAndEdit(hwnd, "监听地址:", margin + Scale(15), innerY, groupW - Scale(30), editH, ID_LISTEN_EDIT, &hListenEdit, FALSE);
 
     curY += group1H + Scale(15);
 
-    // 高级选项 - 调整高度,增加了DNS行
     int group2H = Scale(155);
     HWND hGroup2 = CreateWindow("BUTTON", "高级选项 (可选)", WS_VISIBLE | WS_CHILD | BS_GROUPBOX,
         margin, curY, groupW, group2H, hwnd, NULL, NULL, NULL);
     SendMessage(hGroup2, WM_SETFONT, (WPARAM)hFontUI, TRUE);
     innerY = curY + Scale(25);
 
-    // 3. 身份令牌
     CreateLabelAndEdit(hwnd, "身份令牌:", margin + Scale(15), innerY, groupW - Scale(30), editH, ID_TOKEN_EDIT, &hTokenEdit, FALSE);
     innerY += lineHeight + lineGap;
 
-    // 4. 指定IP
     CreateLabelAndEdit(hwnd, "优选IP(域名):", margin + Scale(15), innerY, groupW - Scale(30), editH, ID_IP_EDIT, &hIpEdit, FALSE);
     innerY += lineHeight + lineGap;
 
-    // 5. ECH域名
     CreateLabelAndEdit(hwnd, "ECH域名:", margin + Scale(15), innerY, groupW - Scale(30), editH, ID_ECH_EDIT, &hEchEdit, FALSE);
     innerY += lineHeight + lineGap;
 
-    // 6. DNS服务器 - 移到ECH下方，说明支持域名格式
-    CreateLabelAndEdit(hwnd, "DNS服务器(域名):", margin + Scale(15), innerY, groupW - Scale(30), editH, ID_DNS_EDIT, &hDnsEdit, FALSE);
+    CreateLabelAndEdit(hwnd, "DNS服务器(IP/域名):", margin + Scale(15), innerY, groupW - Scale(30), editH, ID_DNS_EDIT, &hDnsEdit, FALSE);
 
     curY += group2H + Scale(15);
 
-    // 按钮栏
     int btnW = Scale(120);
     int btnH = Scale(38);
     int btnGap = Scale(20);
@@ -420,13 +414,22 @@ void CreateControls(HWND hwnd) {
     SendMessage(hStopBtn, WM_SETFONT, (WPARAM)hFontUI, TRUE);
     EnableWindow(hStopBtn, FALSE);
 
+    // 保存配置按钮
+    hSaveConfigBtn = CreateWindow("BUTTON", "保存配置", WS_VISIBLE | WS_CHILD | BS_PUSHBUTTON,
+        startX + (btnW + btnGap) * 2, curY, btnW, btnH, hwnd, (HMENU)ID_SAVE_CONFIG_BTN, NULL, NULL);
+    SendMessage(hSaveConfigBtn, WM_SETFONT, (WPARAM)hFontUI, TRUE);
+
+    // 加载配置按钮
+    hLoadConfigBtn = CreateWindow("BUTTON", "加载配置", WS_VISIBLE | WS_CHILD | BS_PUSHBUTTON,
+        startX + (btnW + btnGap) * 3, curY, btnW, btnH, hwnd, (HMENU)ID_LOAD_CONFIG_BTN, NULL, NULL);
+    SendMessage(hLoadConfigBtn, WM_SETFONT, (WPARAM)hFontUI, TRUE);
+
     HWND hClrBtn = CreateWindow("BUTTON", "清空日志", WS_VISIBLE | WS_CHILD | BS_PUSHBUTTON,
         rect.right - margin - btnW, curY, btnW, btnH, hwnd, (HMENU)ID_CLEAR_LOG_BTN, NULL, NULL);
     SendMessage(hClrBtn, WM_SETFONT, (WPARAM)hFontUI, TRUE);
 
     curY += btnH + Scale(15);
 
-    // 日志区域
     HWND hLogLabel = CreateWindow("STATIC", "运行日志:", WS_VISIBLE | WS_CHILD, 
         margin, curY, Scale(100), Scale(20), hwnd, NULL, NULL, NULL);
     SendMessage(hLogLabel, WM_SETFONT, (WPARAM)hFontUI, TRUE);
@@ -442,6 +445,7 @@ void CreateControls(HWND hwnd) {
 
 void GetControlValues() {
     char buf[MAX_URL_LEN];
+    GetWindowText(hConfigNameEdit, currentConfig.configName, sizeof(currentConfig.configName));
     GetWindowText(hServerEdit, buf, sizeof(buf));
     strcpy(currentConfig.server, buf);
 
@@ -455,6 +459,7 @@ void GetControlValues() {
 }
 
 void SetControlValues() {
+    SetWindowText(hConfigNameEdit, currentConfig.configName);
     SetWindowText(hServerEdit, currentConfig.server);
     SetWindowText(hListenEdit, currentConfig.listen);
     SetWindowText(hTokenEdit, currentConfig.token);
@@ -465,7 +470,6 @@ void SetControlValues() {
 
 void StartProcess() {
     char cmdLine[MAX_CMD_LEN];
-    // 修改为 Go 编译的二进制文件名
     char exePath[MAX_PATH] = "ech-workers.exe";
     
     if (GetFileAttributes(exePath) == INVALID_FILE_ATTRIBUTES) {
@@ -475,7 +479,6 @@ void StartProcess() {
     
     snprintf(cmdLine, MAX_CMD_LEN, "\"%s\"", exePath);
     
-    // 构建命令行参数
     #define APPEND_ARG(flag, val) if(strlen(val) > 0) { \
         strcat(cmdLine, " " flag " \""); \
         strcat(cmdLine, val); \
@@ -493,9 +496,17 @@ void StartProcess() {
         APPEND_ARG("-ip", currentConfig.ip);
     }
     
-    // 只有当值不是默认值时才添加参数
-    if (strlen(currentConfig.dns) > 0 && strcmp(currentConfig.dns, "dns.alidns.com/dns-query") != 0) {
+    if (strlen(currentConfig.dns) > 0 && strcmp(currentConfig.dns, "223.5.5.5/dns-query") != 0) {
         APPEND_ARG("-dns", currentConfig.dns);
+    }
+    
+    // 检测DNS是否为IP格式，如果是则添加 -insecure-dns 参数
+    if (strlen(currentConfig.dns) > 0) {
+        char* firstChar = currentConfig.dns;
+        if (*firstChar >= '0' && *firstChar <= '9') {
+            strcat(cmdLine, " -insecure-dns");
+            AppendLog("[提示] 检测到IP格式DNS，已自动跳过TLS证书验证\r\n");
+        }
     }
     
     if (strlen(currentConfig.ech) > 0 && strcmp(currentConfig.ech, "cloudflare-ech.com") != 0) {
@@ -528,7 +539,6 @@ void StartProcess() {
         AppendLog("[错误] 启动失败,请检查配置。\r\n");
     }
 }
-
 
 void StopProcess() {
     isProcessRunning = FALSE;
@@ -610,8 +620,8 @@ void AppendLog(const char* text) {
 void SaveConfig() {
     FILE* f = fopen("config.ini", "w");
     if (!f) return;
-    fprintf(f, "[ECHTunnel]\nserver=%s\nlisten=%s\ntoken=%s\nip=%s\ndns=%s\nech=%s\n",
-        currentConfig.server, currentConfig.listen, currentConfig.token, 
+    fprintf(f, "[ECHTunnel]\nconfigName=%s\nserver=%s\nlisten=%s\ntoken=%s\nip=%s\ndns=%s\nech=%s\n",
+        currentConfig.configName, currentConfig.server, currentConfig.listen, currentConfig.token, 
         currentConfig.ip, currentConfig.dns, currentConfig.ech);
     fclose(f);
 }
@@ -626,7 +636,8 @@ void LoadConfig() {
         *val++ = 0;
         if (val[strlen(val)-1] == '\n') val[strlen(val)-1] = 0;
 
-        if (!strcmp(line, "server")) strcpy(currentConfig.server, val);
+        if (!strcmp(line, "configName")) strcpy(currentConfig.configName, val);
+        else if (!strcmp(line, "server")) strcpy(currentConfig.server, val);
         else if (!strcmp(line, "listen")) strcpy(currentConfig.listen, val);
         else if (!strcmp(line, "token")) strcpy(currentConfig.token, val);
         else if (!strcmp(line, "ip")) strcpy(currentConfig.ip, val);
@@ -634,4 +645,74 @@ void LoadConfig() {
         else if (!strcmp(line, "ech")) strcpy(currentConfig.ech, val);
     }
     fclose(f);
+}
+
+void SaveConfigToFile() {
+    char fileName[MAX_PATH];
+    if (strlen(currentConfig.configName) == 0) {
+        MessageBox(hMainWindow, "请输入配置名称", "提示", MB_OK | MB_ICONWARNING);
+        return;
+    }
+    
+    snprintf(fileName, MAX_PATH, "%s.ini", currentConfig.configName);
+    
+    FILE* f = fopen(fileName, "w");
+    if (!f) {
+        MessageBox(hMainWindow, "保存配置失败", "错误", MB_OK | MB_ICONERROR);
+        return;
+    }
+    
+    fprintf(f, "[ECHTunnel]\nconfigName=%s\nserver=%s\nlisten=%s\ntoken=%s\nip=%s\ndns=%s\nech=%s\n",
+        currentConfig.configName, currentConfig.server, currentConfig.listen, currentConfig.token, 
+        currentConfig.ip, currentConfig.dns, currentConfig.ech);
+    fclose(f);
+    
+    char msg[512];
+    snprintf(msg, sizeof(msg), "配置已保存到: %s", fileName);
+    MessageBox(hMainWindow, msg, "成功", MB_OK | MB_ICONINFORMATION);
+    AppendLog("[配置] 已保存配置文件\r\n");
+}
+
+void LoadConfigFromFile() {
+    OPENFILENAME ofn;
+    char fileName[MAX_PATH] = "";
+    
+    ZeroMemory(&ofn, sizeof(ofn));
+    ofn.lStructSize = sizeof(ofn);
+    ofn.hwndOwner = hMainWindow;
+    ofn.lpstrFilter = "配置文件 (*.ini)\0*.ini\0所有文件 (*.*)\0*.*\0";
+    ofn.lpstrFile = fileName;
+    ofn.nMaxFile = MAX_PATH;
+    ofn.Flags = OFN_EXPLORER | OFN_FILEMUSTEXIST | OFN_HIDEREADONLY;
+    ofn.lpstrDefExt = "ini";
+    
+    if (!GetOpenFileName(&ofn)) {
+        return;
+    }
+    
+    FILE* f = fopen(fileName, "r");
+    if (!f) {
+        MessageBox(hMainWindow, "无法打开配置文件", "错误", MB_OK | MB_ICONERROR);
+        return;
+    }
+    
+    char line[MAX_URL_LEN];
+    while (fgets(line, sizeof(line), f)) {
+        char* val = strchr(line, '=');
+        if (!val) continue;
+        *val++ = 0;
+        if (val[strlen(val)-1] == '\n') val[strlen(val)-1] = 0;
+
+        if (!strcmp(line, "configName")) strcpy(currentConfig.configName, val);
+        else if (!strcmp(line, "server")) strcpy(currentConfig.server, val);
+        else if (!strcmp(line, "listen")) strcpy(currentConfig.listen, val);
+        else if (!strcmp(line, "token")) strcpy(currentConfig.token, val);
+        else if (!strcmp(line, "ip")) strcpy(currentConfig.ip, val);
+        else if (!strcmp(line, "dns")) strcpy(currentConfig.dns, val);
+        else if (!strcmp(line, "ech")) strcpy(currentConfig.ech, val);
+    }
+    fclose(f);
+    
+    MessageBox(hMainWindow, "配置已加载", "成功", MB_OK | MB_ICONINFORMATION);
+    AppendLog("[配置] 已加载配置文件\r\n");
 }
