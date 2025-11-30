@@ -496,7 +496,7 @@ void StartProcess() {
         APPEND_ARG("-ip", currentConfig.ip);
     }
     
-    if (strlen(currentConfig.dns) > 0 && strcmp(currentConfig.dns, "223.5.5.5/dns-query") != 0) {
+    if (strlen(currentConfig.dns) > 0 && strcmp(currentConfig.dns, "dns.alidns.com/dns-query") != 0) {
         APPEND_ARG("-dns", currentConfig.dns);
     }
     
