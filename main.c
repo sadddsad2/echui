@@ -648,16 +648,160 @@ void LoadConfig() {
     }
     fclose(f);
 }
+// 需要在文件开头添加这些声明
+typedef struct {
+    char* configName;
+    HWND hEdit;
+    BOOL result;
+} DialogData;
 
-void SaveConfigToFile() {
-    char newConfigName[MAX_SMALL_LEN] = "";
+LRESULT CALLBACK SaveConfigDialogProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam);
+void EndDialog(HWND hwnd, int result);
+
+// 对话框窗口过程
+LRESULT CALLBACK SaveConfigDialogProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
+    DialogData* pData = (DialogData*)GetWindowLongPtr(hwnd, GWLP_USERDATA);
     
+    switch (msg) {
+        case WM_INITDIALOG:
+            SetWindowLongPtr(hwnd, GWLP_USERDATA, lParam);
+            pData = (DialogData*)lParam;
+            
+            // 创建标签
+            HWND hLabel = CreateWindow("STATIC", "请输入配置名称:",
+                WS_VISIBLE | WS_CHILD,
+                Scale(20), Scale(20), Scale(300), Scale(20),
+                hwnd, NULL, NULL, NULL);
+            SendMessage(hLabel, WM_SETFONT, (WPARAM)hFontUI, TRUE);
+            
+            // 创建输入框
+            pData->hEdit = CreateWindow("EDIT", pData->configName,
+                WS_VISIBLE | WS_CHILD | WS_BORDER | WS_TABSTOP | ES_AUTOHSCROLL,
+                Scale(20), Scale(50), Scale(360), Scale(25),
+                hwnd, (HMENU)1, NULL, NULL);
+            SendMessage(pData->hEdit, WM_SETFONT, (WPARAM)hFontUI, TRUE);
+            SendMessage(pData->hEdit, EM_SETLIMITTEXT, MAX_SMALL_LEN - 1, 0);
+            
+            // 创建确定按钮
+            HWND hOkBtn = CreateWindow("BUTTON", "确定",
+                WS_VISIBLE | WS_CHILD | WS_TABSTOP | BS_DEFPUSHBUTTON,
+                Scale(120), Scale(85), Scale(80), Scale(30),
+                hwnd, (HMENU)IDOK, NULL, NULL);
+            SendMessage(hOkBtn, WM_SETFONT, (WPARAM)hFontUI, TRUE);
+            
+            // 创建取消按钮
+            HWND hCancelBtn = CreateWindow("BUTTON", "取消",
+                WS_VISIBLE | WS_CHILD | WS_TABSTOP | BS_PUSHBUTTON,
+                Scale(220), Scale(85), Scale(80), Scale(30),
+                hwnd, (HMENU)IDCANCEL, NULL, NULL);
+            SendMessage(hCancelBtn, WM_SETFONT, (WPARAM)hFontUI, TRUE);
+            
+            // 设置焦点并选中文本
+            SetFocus(pData->hEdit);
+            SendMessage(pData->hEdit, EM_SETSEL, 0, -1);
+            
+            // 居中对话框
+            RECT rcParent, rcDialog;
+            GetWindowRect(GetParent(hwnd), &rcParent);
+            GetWindowRect(hwnd, &rcDialog);
+            int x = rcParent.left + (rcParent.right - rcParent.left - (rcDialog.right - rcDialog.left)) / 2;
+            int y = rcParent.top + (rcParent.bottom - rcParent.top - (rcDialog.bottom - rcDialog.top)) / 2;
+            SetWindowPos(hwnd, NULL, x, y, 0, 0, SWP_NOSIZE | SWP_NOZORDER);
+            
+            return FALSE;
+            
+        case WM_COMMAND:
+            if (LOWORD(wParam) == IDOK) {
+                if (!pData) break;
+                
+                char tempName[MAX_SMALL_LEN];
+                GetWindowText(pData->hEdit, tempName, sizeof(tempName));
+                
+                // 去除首尾空格
+                char* start = tempName;
+                while (*start == ' ' || *start == '\t') start++;
+                char* end = start + strlen(start) - 1;
+                while (end > start && (*end == ' ' || *end == '\t' || *end == '\r' || *end == '\n')) end--;
+                *(end + 1) = '\0';
+                
+                if (start != tempName) {
+                    memmove(tempName, start, strlen(start) + 1);
+                }
+                
+                if (strlen(tempName) == 0) {
+                    MessageBox(hwnd, "配置名称不能为空", "提示", MB_OK | MB_ICONWARNING);
+                    SetFocus(pData->hEdit);
+                    return TRUE;
+                }
+                
+                strcpy(pData->configName, tempName);
+                pData->result = TRUE;
+                EndDialog(hwnd, IDOK);
+                return TRUE;
+            }
+            else if (LOWORD(wParam) == IDCANCEL) {
+                if (pData) pData->result = FALSE;
+                EndDialog(hwnd, IDCANCEL);
+                return TRUE;
+            }
+            break;
+            
+        case WM_CLOSE:
+            if (pData) pData->result = FALSE;
+            EndDialog(hwnd, IDCANCEL);
+            return TRUE;
+    }
+    
+    return FALSE;
+}
+
+// EndDialog 函数实现
+void EndDialog(HWND hwnd, int result) {
+    (void)result;
+    DestroyWindow(hwnd);
+}
+
+// SaveConfigToFile 函数
+void SaveConfigToFile() {
+    char newConfigName[MAX_SMALL_LEN];
+    strcpy(newConfigName, currentConfig.configName);
+    
+    DialogData data;
+    data.configName = newConfigName;
+    data.hEdit = NULL;
+    data.result = FALSE;
+    
+    // 注册对话框窗口类
+    static BOOL classRegistered = FALSE;
+    if (!classRegistered) {
+        WNDCLASSEX wc = {0};
+        wc.cbSize = sizeof(WNDCLASSEX);
+        wc.lpfnWndProc = SaveConfigDialogProc;
+        wc.hInstance = GetModuleHandle(NULL);
+        wc.lpszClassName = "SaveConfigDialog";
+        wc.hbrBackground = (HBRUSH)(COLOR_BTNFACE + 1);
+        wc.hCursor = LoadCursor(NULL, IDC_ARROW);
+        wc.hIcon = LoadIcon(NULL, IDI_APPLICATION);
+        
+        if (RegisterClassEx(&wc)) {
+            classRegistered = TRUE;
+        } else {
+            MessageBox(hMainWindow, "注册对话框类失败", "错误", MB_OK | MB_ICONERROR);
+            return;
+        }
+    }
+    
+    // 创建模态对话框
     HWND hDialog = CreateWindowEx(
         WS_EX_DLGMODALFRAME | WS_EX_TOPMOST,
-        "STATIC", "输入配置名称",
-        WS_POPUP | WS_CAPTION | WS_SYSMENU,
+        "SaveConfigDialog", 
+        "输入配置名称",
+        WS_POPUP | WS_CAPTION | WS_SYSMENU | WS_VISIBLE,
         0, 0, Scale(400), Scale(150),
-        hMainWindow, NULL, GetModuleHandle(NULL), NULL
+        hMainWindow, 
+        NULL, 
+        GetModuleHandle(NULL), 
+        NULL
     );
     
     if (!hDialog) {
@@ -665,103 +809,42 @@ void SaveConfigToFile() {
         return;
     }
     
-    RECT rcParent, rcDialog;
-    GetWindowRect(hMainWindow, &rcParent);
-    GetWindowRect(hDialog, &rcDialog);
-    int x = rcParent.left + (rcParent.right - rcParent.left - (rcDialog.right - rcDialog.left)) / 2;
-    int y = rcParent.top + (rcParent.bottom - rcParent.top - (rcDialog.bottom - rcDialog.top)) / 2;
-    SetWindowPos(hDialog, NULL, x, y, 0, 0, SWP_NOSIZE | SWP_NOZORDER);
+    // 发送 WM_INITDIALOG 消息
+    SendMessage(hDialog, WM_INITDIALOG, 0, (LPARAM)&data);
     
-    HWND hLabel = CreateWindow("STATIC", "请输入配置名称:",
-        WS_VISIBLE | WS_CHILD,
-        Scale(20), Scale(20), Scale(300), Scale(20),
-        hDialog, NULL, NULL, NULL);
-    SendMessage(hLabel, WM_SETFONT, (WPARAM)hFontUI, TRUE);
+    // 禁用父窗口
+    EnableWindow(hMainWindow, FALSE);
     
-    HWND hEdit = CreateWindow("EDIT", currentConfig.configName,
-        WS_VISIBLE | WS_CHILD | WS_BORDER | ES_AUTOHSCROLL,
-        Scale(20), Scale(50), Scale(360), Scale(25),
-        hDialog, NULL, NULL, NULL);
-    SendMessage(hEdit, WM_SETFONT, (WPARAM)hFontUI, TRUE);
-    SendMessage(hEdit, EM_SETLIMITTEXT, MAX_SMALL_LEN - 1, 0);
-    
-    HWND hOkBtn = CreateWindow("BUTTON", "确定",
-        WS_VISIBLE | WS_CHILD | BS_DEFPUSHBUTTON,
-        Scale(120), Scale(85), Scale(80), Scale(30),
-        hDialog, (HMENU)IDOK, NULL, NULL);
-    SendMessage(hOkBtn, WM_SETFONT, (WPARAM)hFontUI, TRUE);
-    
-    HWND hCancelBtn = CreateWindow("BUTTON", "取消",
-        WS_VISIBLE | WS_CHILD | BS_PUSHBUTTON,
-        Scale(220), Scale(85), Scale(80), Scale(30),
-        hDialog, (HMENU)IDCANCEL, NULL, NULL);
-    SendMessage(hCancelBtn, WM_SETFONT, (WPARAM)hFontUI, TRUE);
-    
-    ShowWindow(hDialog, SW_SHOW);
-    SetFocus(hEdit);
-    SendMessage(hEdit, EM_SETSEL, 0, -1);
-    
-    // 使用简单的消息循环处理对话框
+    // 消息循环
     MSG msg;
-    BOOL dialogResult = FALSE;
-    BOOL dialogRunning = TRUE;
+    BOOL dialogActive = TRUE;
     
-    EnableWindow(hMainWindow, FALSE); // 禁用主窗口
-    
-    while (dialogRunning) {
-        if (PeekMessage(&msg, NULL, 0, 0, PM_REMOVE)) {
-            if (msg.message == WM_QUIT) {
-                PostQuitMessage((int)msg.wParam);
-                break;
-            }
-            
-            // 处理对话框消息
-            if (msg.message == WM_COMMAND && (msg.hwnd == hDialog || IsChild(hDialog, msg.hwnd))) {
-                if (LOWORD(msg.wParam) == IDOK) {
-                    GetWindowText(hEdit, newConfigName, sizeof(newConfigName));
-                    
-                    // 去除首尾空格
-                    char* start = newConfigName;
-                    while (*start == ' ') start++;
-                    char* end = start + strlen(start) - 1;
-                    while (end > start && *end == ' ') end--;
-                    *(end + 1) = '\0';
-                    memmove(newConfigName, start, strlen(start) + 1);
-                    
-                    if (strlen(newConfigName) == 0) {
-                        MessageBox(hDialog, "配置名称不能为空", "提示", MB_OK | MB_ICONWARNING);
-                        SetFocus(hEdit);
-                        continue;
-                    }
-                    
-                    dialogResult = TRUE;
-                    dialogRunning = FALSE;
-                } else if (LOWORD(msg.wParam) == IDCANCEL) {
-                    dialogRunning = FALSE;
-                }
-                continue;
-            }
-            
-            if (msg.message == WM_CLOSE && msg.hwnd == hDialog) {
-                dialogRunning = FALSE;
-                continue;
-            }
-            
-            // 处理Tab键切换焦点
-            if (!IsDialogMessage(hDialog, &msg)) {
-                TranslateMessage(&msg);
-                DispatchMessage(&msg);
-            }
-        } else {
-            WaitMessage();
+    while (dialogActive && GetMessage(&msg, NULL, 0, 0)) {
+        // 检查对话框是否还存在
+        if (!IsWindow(hDialog)) {
+            dialogActive = FALSE;
+            break;
         }
+        
+        // 处理对话框消息
+        if (IsDialogMessage(hDialog, &msg)) {
+            continue;
+        }
+        
+        TranslateMessage(&msg);
+        DispatchMessage(&msg);
     }
     
-    EnableWindow(hMainWindow, TRUE); // 重新启用主窗口
+    // 重新启用父窗口
+    EnableWindow(hMainWindow, TRUE);
     SetForegroundWindow(hMainWindow);
-    DestroyWindow(hDialog);
     
-    if (!dialogResult) {
+    // 如果对话框还在，销毁它
+    if (IsWindow(hDialog)) {
+        DestroyWindow(hDialog);
+    }
+    
+    if (!data.result) {
         AppendLog("[配置] 取消保存配置\r\n");
         return;
     }
@@ -770,6 +853,7 @@ void SaveConfigToFile() {
     strcpy(currentConfig.configName, newConfigName);
     UpdateConfigNameDisplay();
     
+    // 保存到文件
     char fileName[MAX_PATH];
     snprintf(fileName, MAX_PATH, "%s.ini", newConfigName);
     
@@ -780,6 +864,7 @@ void SaveConfigToFile() {
         return;
     }
     
+    // ECHWorkerClient 版本 - 没有 connections 字段
     fprintf(f, "[ECHTunnel]\nconfigName=%s\nserver=%s\nlisten=%s\ntoken=%s\nip=%s\ndns=%s\nech=%s\n",
         currentConfig.configName, currentConfig.server, currentConfig.listen, currentConfig.token, 
         currentConfig.ip, currentConfig.dns, currentConfig.ech);
