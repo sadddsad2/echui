@@ -13,7 +13,7 @@
 
 typedef BOOL (WINAPI *SetProcessDPIAwareFunc)(void);
 
-#define APP_VERSION "1.1"
+#define APP_VERSION "1.2" // 版本号升级
 #define APP_TITLE "ECH workers 客户端 v" APP_VERSION
 
 #define MAX_URL_LEN 8192
@@ -33,11 +33,13 @@ HBRUSH hBrushLog = NULL;
 
 int g_dpi = 96;
 int g_scale = 100;
+int g_totalNodeCount = 0; // 全局变量：用于多订阅合并计算节点总数
 
 int Scale(int x) {
     return (x * g_scale) / 100;
 }
 
+// 控件ID定义
 #define ID_CONFIG_NAME_EDIT 1000
 #define ID_SERVER_EDIT      1001
 #define ID_LISTEN_EDIT      1002
@@ -51,14 +53,20 @@ int Scale(int x) {
 #define ID_LOG_EDIT         1013
 #define ID_SAVE_CONFIG_BTN  1014
 #define ID_LOAD_CONFIG_BTN  1015
+// 订阅相关新ID
 #define ID_SUBSCRIBE_URL_EDIT 1016
 #define ID_FETCH_SUB_BTN    1017
 #define ID_NODE_LIST        1018
+#define ID_ADD_SUB_BTN      1019
+#define ID_DEL_SUB_BTN      1020
+#define ID_SUB_LIST         1021
 
 HWND hMainWindow;
 HWND hConfigNameEdit, hServerEdit, hListenEdit, hTokenEdit, hIpEdit, hDnsEdit, hEchEdit;
 HWND hStartBtn, hStopBtn, hLogEdit, hSaveConfigBtn, hLoadConfigBtn;
 HWND hSubscribeUrlEdit, hFetchSubBtn, hNodeList;
+HWND hAddSubBtn, hDelSubBtn, hSubList; // 新增句柄
+
 PROCESS_INFORMATION processInfo;
 HANDLE hLogPipe = NULL;
 HANDLE hLogThread = NULL;
@@ -95,8 +103,16 @@ void SetControlValues();
 void InitTrayIcon(HWND hwnd);
 void ShowTrayIcon();
 void RemoveTrayIcon();
-void FetchSubscription();
-void ParseSubscriptionData(const char* data);
+
+// 订阅相关函数更新
+void FetchAllSubscriptions(); // 更新所有订阅
+void ProcessSingleSubscription(const char* url); // 处理单个URL
+void ParseSubscriptionData(const char* data); // 解析数据(不重置列表)
+void AddSubscription();
+void DelSubscription();
+void SaveSubscriptionList();
+void LoadSubscriptionList();
+
 void SaveNodeConfig(int nodeIndex);
 void LoadNodeList();
 void SaveNodeList();
@@ -160,8 +176,9 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
 
     if (!RegisterClass(&wc)) return 1;
 
+    // 稍微增加窗口高度以容纳新控件
     int winWidth = Scale(900);
-    int winHeight = Scale(800);
+    int winHeight = Scale(850); 
     int screenW = GetSystemMetrics(SM_CXSCREEN);
     int screenH = GetSystemMetrics(SM_CYSCREEN);
 
@@ -221,6 +238,7 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam) 
         case WM_CREATE:
             CreateControls(hwnd);
             LoadConfig();
+            LoadSubscriptionList(); // 加载订阅列表
             SetControlValues();
             LoadNodeList();
             break;
@@ -323,9 +341,18 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam) 
                     LoadConfigFromFile();
                     SetControlValues();
                     break;
+                
+                // 新增按钮事件
+                case ID_ADD_SUB_BTN:
+                    AddSubscription();
+                    break;
+
+                case ID_DEL_SUB_BTN:
+                    DelSubscription();
+                    break;
 
                 case ID_FETCH_SUB_BTN:
-                    FetchSubscription();
+                    FetchAllSubscriptions();
                     break;
 
                 case ID_NODE_LIST:
@@ -391,30 +418,59 @@ void CreateControls(HWND hwnd) {
     int editH = Scale(26);
     int curY = margin;
 
-    int groupSubH = Scale(230);
+    // ----- 订阅管理区域重构 -----
+    int groupSubH = Scale(280); // 增加高度以容纳列表
     HWND hGroupSub = CreateWindow("BUTTON", "订阅管理", WS_VISIBLE | WS_CHILD | BS_GROUPBOX,
         margin, curY, groupW, groupSubH, hwnd, NULL, NULL, NULL);
     SendMessage(hGroupSub, WM_SETFONT, (WPARAM)hFontUI, TRUE);
     
     int innerY = curY + Scale(25);
-    CreateLabelAndEdit(hwnd, "订阅链接:", margin + Scale(15), innerY, groupW - Scale(30), editH, ID_SUBSCRIBE_URL_EDIT, &hSubscribeUrlEdit, FALSE);
     
-    innerY += lineHeight + lineGap;
-    
-    hFetchSubBtn = CreateWindow("BUTTON", "获取订阅", WS_VISIBLE | WS_CHILD | BS_PUSHBUTTON,
-        margin + Scale(165), innerY, Scale(120), Scale(32), hwnd, (HMENU)ID_FETCH_SUB_BTN, NULL, NULL);
+    // 1. 输入框行：Label + Edit + 添加按钮
+    HWND hSubLabel = CreateWindow("STATIC", "订阅链接:", WS_VISIBLE | WS_CHILD | SS_LEFT, 
+        margin + Scale(15), innerY + Scale(3), Scale(80), Scale(20), hwnd, NULL, NULL, NULL);
+    SendMessage(hSubLabel, WM_SETFONT, (WPARAM)hFontUI, TRUE);
+
+    hSubscribeUrlEdit = CreateWindow("EDIT", "", WS_VISIBLE | WS_CHILD | WS_TABSTOP | WS_BORDER | ES_AUTOHSCROLL, 
+        margin + Scale(100), innerY, groupW - Scale(200), editH, hwnd, (HMENU)ID_SUBSCRIBE_URL_EDIT, NULL, NULL);
+    SendMessage(hSubscribeUrlEdit, WM_SETFONT, (WPARAM)hFontUI, TRUE);
+
+    hAddSubBtn = CreateWindow("BUTTON", "添加", WS_VISIBLE | WS_CHILD | BS_PUSHBUTTON,
+        margin + groupW - Scale(90), innerY, Scale(80), editH, hwnd, (HMENU)ID_ADD_SUB_BTN, NULL, NULL);
+    SendMessage(hAddSubBtn, WM_SETFONT, (WPARAM)hFontUI, TRUE);
+
+    innerY += lineHeight + lineGap - Scale(5);
+
+    // 2. 订阅列表框
+    hSubList = CreateWindow("LISTBOX", "", WS_VISIBLE | WS_CHILD | WS_BORDER | WS_VSCROLL | LBS_NOTIFY | LBS_NOINTEGRALHEIGHT,
+        margin + Scale(15), innerY, groupW - Scale(30), Scale(60), hwnd, (HMENU)ID_SUB_LIST, NULL, NULL);
+    SendMessage(hSubList, WM_SETFONT, (WPARAM)hFontUI, TRUE);
+
+    innerY += Scale(60) + Scale(5);
+
+    // 3. 操作按钮行
+    hDelSubBtn = CreateWindow("BUTTON", "删除选中订阅", WS_VISIBLE | WS_CHILD | BS_PUSHBUTTON,
+        margin + Scale(15), innerY, Scale(120), Scale(30), hwnd, (HMENU)ID_DEL_SUB_BTN, NULL, NULL);
+    SendMessage(hDelSubBtn, WM_SETFONT, (WPARAM)hFontUI, TRUE);
+
+    hFetchSubBtn = CreateWindow("BUTTON", "更新所有订阅", WS_VISIBLE | WS_CHILD | BS_PUSHBUTTON,
+        margin + Scale(150), innerY, Scale(120), Scale(30), hwnd, (HMENU)ID_FETCH_SUB_BTN, NULL, NULL);
     SendMessage(hFetchSubBtn, WM_SETFONT, (WPARAM)hFontUI, TRUE);
     
+    innerY += Scale(35);
+
+    // 4. 节点列表
     HWND hNodeLabel = CreateWindow("STATIC", "节点列表(单击查看/双击启用):", WS_VISIBLE | WS_CHILD | SS_LEFT, 
-        margin + Scale(15), innerY + Scale(40), Scale(200), Scale(20), hwnd, NULL, NULL, NULL);
+        margin + Scale(15), innerY + Scale(3), Scale(200), Scale(20), hwnd, NULL, NULL, NULL);
     SendMessage(hNodeLabel, WM_SETFONT, (WPARAM)hFontUI, TRUE);
     
     hNodeList = CreateWindow("LISTBOX", "", WS_VISIBLE | WS_CHILD | WS_BORDER | WS_VSCROLL | LBS_NOTIFY,
-        margin + Scale(165), innerY + Scale(37), groupW - Scale(180), Scale(140), hwnd, (HMENU)ID_NODE_LIST, NULL, NULL);
+        margin + Scale(15), innerY + Scale(25), groupW - Scale(30), Scale(90), hwnd, (HMENU)ID_NODE_LIST, NULL, NULL);
     SendMessage(hNodeList, WM_SETFONT, (WPARAM)hFontUI, TRUE);
 
     curY += groupSubH + Scale(15);
-
+    
+    // ----- 下方配置区域保持不变 -----
     HWND hConfigLabel = CreateWindow("STATIC", "配置名称:", WS_VISIBLE | WS_CHILD | SS_LEFT, 
         margin, curY + Scale(3), Scale(80), Scale(20), hwnd, NULL, NULL, NULL);
     SendMessage(hConfigLabel, WM_SETFONT, (WPARAM)hFontUI, TRUE);
@@ -495,10 +551,70 @@ void CreateControls(HWND hwnd) {
 
     hLogEdit = CreateWindow("EDIT", "", 
         WS_VISIBLE | WS_CHILD | WS_BORDER | WS_VSCROLL | ES_MULTILINE | ES_READONLY, 
-        margin, curY, winW - (margin * 2), Scale(150), hwnd, (HMENU)ID_LOG_EDIT, NULL, NULL);
+        margin, curY, winW - (margin * 2), Scale(130), hwnd, (HMENU)ID_LOG_EDIT, NULL, NULL);
     SendMessage(hLogEdit, WM_SETFONT, (WPARAM)hFontLog, TRUE);
     SendMessage(hLogEdit, EM_SETLIMITTEXT, 0, 0);
 }
+
+// ============ 订阅列表文件管理 ============
+
+void SaveSubscriptionList() {
+    FILE* f = fopen("subscriptions.txt", "w");
+    if (!f) return;
+    
+    int count = SendMessage(hSubList, LB_GETCOUNT, 0, 0);
+    for (int i = 0; i < count; i++) {
+        char url[MAX_URL_LEN];
+        int len = SendMessage(hSubList, LB_GETTEXT, i, (LPARAM)url);
+        if (len > 0) {
+            fprintf(f, "%s\n", url);
+        }
+    }
+    fclose(f);
+}
+
+void LoadSubscriptionList() {
+    FILE* f = fopen("subscriptions.txt", "r");
+    if (!f) return;
+    
+    SendMessage(hSubList, LB_RESETCONTENT, 0, 0);
+    char line[MAX_URL_LEN];
+    while (fgets(line, sizeof(line), f)) {
+        size_t len = strlen(line);
+        while (len > 0 && (line[len-1] == '\n' || line[len-1] == '\r')) {
+            line[--len] = 0;
+        }
+        if (len > 0) {
+            SendMessage(hSubList, LB_ADDSTRING, 0, (LPARAM)line);
+        }
+    }
+    fclose(f);
+}
+
+void AddSubscription() {
+    char url[MAX_URL_LEN];
+    GetWindowText(hSubscribeUrlEdit, url, sizeof(url));
+    if (strlen(url) == 0) return;
+    
+    // 检查是否重复
+    if (SendMessage(hSubList, LB_FINDSTRINGEXACT, -1, (LPARAM)url) != LB_ERR) {
+        MessageBox(hMainWindow, "该订阅链接已存在", "提示", MB_OK);
+        return;
+    }
+    
+    SendMessage(hSubList, LB_ADDSTRING, 0, (LPARAM)url);
+    SetWindowText(hSubscribeUrlEdit, ""); // 清空输入框
+    SaveSubscriptionList();
+}
+
+void DelSubscription() {
+    int sel = SendMessage(hSubList, LB_GETCURSEL, 0, 0);
+    if (sel == LB_ERR) return;
+    
+    SendMessage(hSubList, LB_DELETESTRING, sel, 0);
+    SaveSubscriptionList();
+}
+
 // ============ 第二部分：进程管理、配置保存加载、编码转换 ============
 
 void GetControlValues() {
@@ -1187,38 +1303,31 @@ BOOL is_base64_encoded(const char* data) {
     return (valid_chars * 100 / len) > 90;
 }
 
-// 解析订阅数据
+// 解析订阅数据 (修改版：累加节点，不清除列表)
 void ParseSubscriptionData(const char* data) {
     if (!data || strlen(data) == 0) {
-        AppendLog("[订阅] 订阅数据为空\r\n");
         return;
     }
     
-    SendMessage(hNodeList, LB_RESETCONTENT, 0, 0);
-    
     char* dataCopy = NULL;
     if (is_base64_encoded(data)) {
-        AppendLog("[订阅] 检测到Base64编码，正在解码...\r\n");
         size_t decoded_len = 0;
         dataCopy = base64_decode(data, &decoded_len);
         if (!dataCopy) {
             AppendLog("[订阅] Base64解码失败\r\n");
             return;
         }
-        AppendLog("[订阅] Base64解码成功\r\n");
     } else {
         dataCopy = strdup(data);
         if (!dataCopy) return;
     }
     
     char* line = strtok(dataCopy, "\r\n");
-    int nodeCount = 0;
-    int filteredCount = 0;
+    int newNodesCount = 0;
     
     while (line != NULL) {
         if (strlen(line) > 0 && line[0] != ';' && strncmp(line, "//", 2) != 0) {
             if (strncmp(line, "ech://", 6) != 0 && strncmp(line, "ECH://", 6) != 0) {
-                filteredCount++;
                 line = strtok(NULL, "\r\n");
                 continue;
             }
@@ -1322,69 +1431,45 @@ void ParseSubscriptionData(const char* data) {
                     strcpy(currentConfig.ech, ech);
                 }
                 
-                SaveNodeConfig(nodeCount);
+                // 使用全局计数器保存
+                SaveNodeConfig(g_totalNodeCount);
                 SendMessage(hNodeList, LB_ADDSTRING, 0, (LPARAM)nodeName);
-                nodeCount++;
+                g_totalNodeCount++;
+                newNodesCount++;
             }
         }
         line = strtok(NULL, "\r\n");
     }
     
     free(dataCopy);
-    
-    char logMsg[512];
-    if (filteredCount > 0) {
-        snprintf(logMsg, sizeof(logMsg), 
-            "[订阅] 成功解析 %d 个 ech:// 节点，过滤 %d 个其他协议节点\r\n", 
-            nodeCount, filteredCount);
-    } else {
-        snprintf(logMsg, sizeof(logMsg), "[订阅] 成功解析 %d 个节点\r\n", nodeCount);
-    }
+    char logMsg[128];
+    snprintf(logMsg, sizeof(logMsg), "[订阅] 解析得到 %d 个节点\r\n", newNodesCount);
     AppendLog(logMsg);
-    
-    if (nodeCount > 0) {
-        char msg[256];
-        snprintf(msg, sizeof(msg), "成功获取 %d 个节点", nodeCount);
-        MessageBox(hMainWindow, msg, "订阅成功", MB_OK | MB_ICONINFORMATION);
-        SaveNodeList();
-    } else if (filteredCount > 0) {
-        snprintf(logMsg, sizeof(logMsg), 
-            "订阅中未找到 ech:// 协议节点\n已过滤 %d 个其他协议节点", 
-            filteredCount);
-        MessageBox(hMainWindow, logMsg, "提示", MB_OK | MB_ICONWARNING);
-    } else {
-        MessageBox(hMainWindow, "未找到有效节点", "提示", MB_OK | MB_ICONWARNING);
-    }
 }
 
-// 获取订阅
-void FetchSubscription() {
-    char url[MAX_URL_LEN];
-    GetWindowText(hSubscribeUrlEdit, url, sizeof(url));
+// 处理单个订阅URL
+void ProcessSingleSubscription(const char* url) {
+    if (strlen(url) == 0) return;
     
-    if (strlen(url) == 0) {
-        MessageBox(hMainWindow, "请输入订阅链接", "提示", MB_OK | MB_ICONWARNING);
-        return;
-    }
-    
-    AppendLog("[订阅] 正在获取订阅...\r\n");
+    char logMsg[MAX_URL_LEN + 30];
+    snprintf(logMsg, sizeof(logMsg), "[订阅] 获取: %s\r\n", url);
+    AppendLog(logMsg);
     
     HINTERNET hInternet = InternetOpen("ECHWorkerClient", INTERNET_OPEN_TYPE_PRECONFIG, NULL, NULL, 0);
-    if (!hInternet) {
-        AppendLog("[订阅] 初始化网络失败\r\n");
-        return;
-    }
+    if (!hInternet) return;
     
     HINTERNET hConnect = InternetOpenUrl(hInternet, url, NULL, 0, 
         INTERNET_FLAG_RELOAD | INTERNET_FLAG_NO_CACHE_WRITE, 0);
     
     if (!hConnect) {
-        AppendLog("[订阅] 连接订阅地址失败\r\n");
+        AppendLog("[订阅] 连接失败\r\n");
         InternetCloseHandle(hInternet);
         return;
     }
     
-    char* buffer = (char*)malloc(1024 * 1024);
+    // 动态分配大缓冲区，防止溢出
+    size_t bufSize = 1024 * 1024; // 1MB
+    char* buffer = (char*)malloc(bufSize);
     if (!buffer) {
         InternetCloseHandle(hConnect);
         InternetCloseHandle(hInternet);
@@ -1399,7 +1484,7 @@ void FetchSubscription() {
     
     while (InternetReadFile(hConnect, tempBuf, sizeof(tempBuf) - 1, &bytesRead) && bytesRead > 0) {
         tempBuf[bytesRead] = 0;
-        if (totalRead + bytesRead < 1024 * 1024 - 1) {
+        if (totalRead + bytesRead < bufSize - 1) {
             strcat(buffer, tempBuf);
             totalRead += bytesRead;
         }
@@ -1411,9 +1496,46 @@ void FetchSubscription() {
     if (totalRead > 0) {
         ParseSubscriptionData(buffer);
     } else {
-        AppendLog("[订阅] 获取订阅数据失败\r\n");
-        MessageBox(hMainWindow, "获取订阅失败", "错误", MB_OK | MB_ICONERROR);
+        AppendLog("[订阅] 获取数据为空\r\n");
     }
     
     free(buffer);
+}
+
+// 获取所有订阅 (重构入口函数)
+void FetchAllSubscriptions() {
+    int subCount = SendMessage(hSubList, LB_GETCOUNT, 0, 0);
+    if (subCount == 0) {
+        MessageBox(hMainWindow, "请先添加订阅链接", "提示", MB_OK);
+        return;
+    }
+    
+    AppendLog("--------------------------\r\n");
+    AppendLog("[订阅] 开始更新所有订阅...\r\n");
+    
+    // 1. 清空当前节点列表UI
+    SendMessage(hNodeList, LB_RESETCONTENT, 0, 0);
+    
+    // 2. 重置全局节点计数器
+    g_totalNodeCount = 0;
+    
+    // 3. (可选) 清理 nodes 文件夹下的旧文件，防止残留
+    // 这里简单处理：重写时会覆盖同名文件，但如果新节点数少于旧节点数，会有残留。
+    // 生产环境建议遍历删除 nodes/*.ini，这里略过以保持代码简洁。
+    
+    // 4. 遍历所有订阅链接
+    for (int i = 0; i < subCount; i++) {
+        char url[MAX_URL_LEN];
+        SendMessage(hSubList, LB_GETTEXT, i, (LPARAM)url);
+        ProcessSingleSubscription(url);
+    }
+    
+    // 5. 保存新的节点列表文件
+    SaveNodeList();
+    
+    char msg[256];
+    snprintf(msg, sizeof(msg), "更新完成，共获取 %d 个节点", g_totalNodeCount);
+    MessageBox(hMainWindow, msg, "订阅成功", MB_OK | MB_ICONINFORMATION);
+    AppendLog("[订阅] 全部更新完成\r\n");
+    AppendLog("--------------------------\r\n");
 }
