@@ -701,15 +701,22 @@ void SaveConfigToFile() {
     SetFocus(hEdit);
     SendMessage(hEdit, EM_SETSEL, 0, -1);
     
-    // 修复：改进消息循环，正确处理对话框消息
+    // 使用简单的消息循环处理对话框
     MSG msg;
     BOOL dialogResult = FALSE;
     BOOL dialogRunning = TRUE;
     
-    while (dialogRunning && GetMessage(&msg, NULL, 0, 0)) {
-        // 检查是否是对话框或其子控件的消息
-        if (msg.hwnd == hDialog || IsChild(hDialog, msg.hwnd)) {
-            if (msg.message == WM_COMMAND) {
+    EnableWindow(hMainWindow, FALSE); // 禁用主窗口
+    
+    while (dialogRunning) {
+        if (PeekMessage(&msg, NULL, 0, 0, PM_REMOVE)) {
+            if (msg.message == WM_QUIT) {
+                PostQuitMessage((int)msg.wParam);
+                break;
+            }
+            
+            // 处理对话框消息
+            if (msg.message == WM_COMMAND && (msg.hwnd == hDialog || IsChild(hDialog, msg.hwnd))) {
                 if (LOWORD(msg.wParam) == IDOK) {
                     GetWindowText(hEdit, newConfigName, sizeof(newConfigName));
                     
@@ -729,26 +736,30 @@ void SaveConfigToFile() {
                     
                     dialogResult = TRUE;
                     dialogRunning = FALSE;
-                    DestroyWindow(hDialog);
-                    continue;
                 } else if (LOWORD(msg.wParam) == IDCANCEL) {
                     dialogRunning = FALSE;
-                    DestroyWindow(hDialog);
-                    continue;
                 }
-            } else if (msg.message == WM_CLOSE) {
-                dialogRunning = FALSE;
-                DestroyWindow(hDialog);
                 continue;
             }
-        }
-        
-        // 处理Tab键切换焦点
-        if (!IsDialogMessage(hDialog, &msg)) {
-            TranslateMessage(&msg);
-            DispatchMessage(&msg);
+            
+            if (msg.message == WM_CLOSE && msg.hwnd == hDialog) {
+                dialogRunning = FALSE;
+                continue;
+            }
+            
+            // 处理Tab键切换焦点
+            if (!IsDialogMessage(hDialog, &msg)) {
+                TranslateMessage(&msg);
+                DispatchMessage(&msg);
+            }
+        } else {
+            WaitMessage();
         }
     }
+    
+    EnableWindow(hMainWindow, TRUE); // 重新启用主窗口
+    SetForegroundWindow(hMainWindow);
+    DestroyWindow(hDialog);
     
     if (!dialogResult) {
         AppendLog("[配置] 取消保存配置\r\n");
@@ -769,9 +780,9 @@ void SaveConfigToFile() {
         return;
     }
     
-    fprintf(f, "[ECHTunnel]\nconfigName=%s\nserver=%s\nlisten=%s\ntoken=%s\nip=%s\ndns=%s\nech=%s\nconnections=%d\n",
+    fprintf(f, "[ECHTunnel]\nconfigName=%s\nserver=%s\nlisten=%s\ntoken=%s\nip=%s\ndns=%s\nech=%s\n",
         currentConfig.configName, currentConfig.server, currentConfig.listen, currentConfig.token, 
-        currentConfig.ip, currentConfig.dns, currentConfig.ech, currentConfig.connections);
+        currentConfig.ip, currentConfig.dns, currentConfig.ech);
     fclose(f);
     
     char msg_text[512];
