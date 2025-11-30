@@ -537,27 +537,50 @@ void StartProcess() {
     
     snprintf(cmdLine, MAX_CMD_LEN, "\"%s\"", exePath);
     
-    #define APPEND_ARG(flag, val) if(strlen(val) > 0) { \
-        strcat(cmdLine, " " flag " \""); \
-        strcat(cmdLine, val); \
-        strcat(cmdLine, "\""); \
+    // 添加 -f 参数（服务地址）
+    if (strlen(currentConfig.server) > 0) {
+        strcat(cmdLine, " -f ");
+        strcat(cmdLine, currentConfig.server);
     }
-
-    APPEND_ARG("-f", currentConfig.server);
-    APPEND_ARG("-l", currentConfig.listen);
     
+    // 添加 -l 参数（监听地址），去掉 proxy:// 前缀
+    if (strlen(currentConfig.listen) > 0) {
+        char listenAddr[MAX_SMALL_LEN];
+        strcpy(listenAddr, currentConfig.listen);
+        
+        // 去掉 socks5:// 或 proxy:// 前缀
+        char* actualAddr = listenAddr;
+        if (strncmp(listenAddr, "socks5://", 9) == 0) {
+            actualAddr = listenAddr + 9;
+        } else if (strncmp(listenAddr, "proxy://", 8) == 0) {
+            actualAddr = listenAddr + 8;
+        } else if (strncmp(listenAddr, "http://", 7) == 0) {
+            actualAddr = listenAddr + 7;
+        }
+        
+        strcat(cmdLine, " -l ");
+        strcat(cmdLine, actualAddr);
+    }
+    
+    // 添加 -token 参数
     if (strlen(currentConfig.token) > 0) {
-        APPEND_ARG("-token", currentConfig.token);
+        strcat(cmdLine, " -token ");
+        strcat(cmdLine, currentConfig.token);
     }
     
+    // 添加 -ip 参数（优选IP）
     if (strlen(currentConfig.ip) > 0) {
-        APPEND_ARG("-ip", currentConfig.ip);
+        strcat(cmdLine, " -ip ");
+        strcat(cmdLine, currentConfig.ip);
     }
     
+    // 添加 -dns 参数（如果不是默认值）
     if (strlen(currentConfig.dns) > 0 && strcmp(currentConfig.dns, "dns.alidns.com/dns-query") != 0) {
-        APPEND_ARG("-dns", currentConfig.dns);
+        strcat(cmdLine, " -dns ");
+        strcat(cmdLine, currentConfig.dns);
     }
     
+    // 检测IP格式DNS，自动添加 -insecure-dns
     if (strlen(currentConfig.dns) > 0) {
         char* firstChar = currentConfig.dns;
         if (*firstChar >= '0' && *firstChar <= '9') {
@@ -566,8 +589,10 @@ void StartProcess() {
         }
     }
     
+    // 添加 -ech 参数（如果不是默认值）
     if (strlen(currentConfig.ech) > 0 && strcmp(currentConfig.ech, "cloudflare-ech.com") != 0) {
-        APPEND_ARG("-ech", currentConfig.ech);
+        strcat(cmdLine, " -ech ");
+        strcat(cmdLine, currentConfig.ech);
     }
 
     SECURITY_ATTRIBUTES sa = { sizeof(SECURITY_ATTRIBUTES), NULL, TRUE };
@@ -598,7 +623,6 @@ void StartProcess() {
         AppendLog("[错误] 启动失败,请检查配置。\r\n");
     }
 }
-
 void StopProcess() {
     isProcessRunning = FALSE;
 
@@ -649,14 +673,21 @@ DWORD WINAPI LogReaderThread(LPVOID lpParam) {
     while (isProcessRunning && hLogPipe) {
         if (ReadFile(hLogPipe, buf, sizeof(buf)-1, &read, NULL) && read > 0) {
             buf[read] = 0;
-            AppendLogAsync(buf);
+            
+            // Go 程序输出的是 UTF-8，需要转换为 GBK 显示
+            char* gbkText = UTF8ToGBK(buf);
+            if (gbkText) {
+                AppendLogAsync(gbkText);
+                free(gbkText);
+            } else {
+                AppendLogAsync(buf);
+            }
         } else {
             break; 
         }
     }
     return 0;
 }
-
 void AppendLog(const char* text) {
     if (!IsWindow(hLogEdit)) return;
     int len = GetWindowTextLength(hLogEdit);
