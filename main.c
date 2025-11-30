@@ -770,6 +770,63 @@ void SaveConfigToFile() {
     MessageBox(hMainWindow, msg, "成功", MB_OK | MB_ICONINFORMATION);
     AppendLog("[配置] 已保存配置文件\r\n");
 }
+void LoadConfigFromFile() {
+    OPENFILENAME ofn;
+    char fileName[MAX_PATH] = "";
+    
+    ZeroMemory(&ofn, sizeof(ofn));
+    ofn.lStructSize = sizeof(ofn);
+    ofn.hwndOwner = hMainWindow;
+    ofn.lpstrFilter = "配置文件 (*.ini)\0*.ini\0所有文件 (*.*)\0*.*\0";
+    ofn.lpstrFile = fileName;
+    ofn.nMaxFile = MAX_PATH;
+    ofn.Flags = OFN_EXPLORER | OFN_FILEMUSTEXIST | OFN_HIDEREADONLY;
+    ofn.lpstrDefExt = "ini";
+    
+    if (!GetOpenFileName(&ofn)) {
+        return;
+    }
+    
+    FILE* f = fopen(fileName, "r");
+    if (!f) {
+        MessageBox(hMainWindow, "无法打开配置文件", "错误", MB_OK | MB_ICONERROR);
+        return;
+    }
+    
+    char line[MAX_URL_LEN];
+    while (fgets(line, sizeof(line), f)) {
+        char* val = strchr(line, '=');
+        if (!val) continue;
+        *val++ = 0;
+        if (val[strlen(val)-1] == '\n') val[strlen(val)-1] = 0;
+
+        if (!strcmp(line, "configName")) strcpy(currentConfig.configName, val);
+        else if (!strcmp(line, "server")) strcpy(currentConfig.server, val);
+        else if (!strcmp(line, "listen")) strcpy(currentConfig.listen, val);
+        else if (!strcmp(line, "token")) strcpy(currentConfig.token, val);
+        else if (!strcmp(line, "ip")) strcpy(currentConfig.ip, val);
+        else if (!strcmp(line, "dns")) strcpy(currentConfig.dns, val);
+        else if (!strcmp(line, "ech")) strcpy(currentConfig.ech, val);
+    }
+    fclose(f);
+    
+    BOOL wasRunning = isProcessRunning;
+    
+    if (wasRunning) {
+        AppendLog("[配置] 检测到进程运行中,正在停止...\r\n");
+        StopProcess();
+        Sleep(500);
+    }
+    
+    MessageBox(hMainWindow, "配置已加载", "成功", MB_OK | MB_ICONINFORMATION);
+    AppendLog("[配置] 已加载配置文件\r\n");
+    
+    if (wasRunning) {
+        AppendLog("[配置] 正在使用新配置重启进程...\r\n");
+        Sleep(200);
+        StartProcess();
+    }
+}
 void ParseSubscriptionData(const char* data) {
     if (!data || strlen(data) == 0) {
         AppendLog("[订阅] 订阅数据为空\r\n");
