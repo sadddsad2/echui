@@ -1,8 +1,10 @@
 #pragma comment(linker,"\"/manifestdependency:type='win32' name='Microsoft.Windows.Common-Controls' version='6.0.0.0' processorArchitecture='*' publicKeyToken='6595b64144ccf1df' language='*'\"")
+#pragma comment(lib, "wininet.lib")
 
 #include <windows.h>
 #include <commctrl.h>
 #include <shellapi.h>
+#include <wininet.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -12,7 +14,7 @@
 
 typedef BOOL (WINAPI *SetProcessDPIAwareFunc)(void);
 
-#define APP_VERSION "1.0"
+#define APP_VERSION "1.1"
 #define APP_TITLE "ECH workers 客户端 v" APP_VERSION
 
 #define MAX_URL_LEN 8192
@@ -50,10 +52,14 @@ int Scale(int x) {
 #define ID_LOG_EDIT         1013
 #define ID_SAVE_CONFIG_BTN  1014
 #define ID_LOAD_CONFIG_BTN  1015
+#define ID_SUBSCRIBE_URL_EDIT 1016
+#define ID_FETCH_SUB_BTN    1017
+#define ID_NODE_LIST        1018
 
 HWND hMainWindow;
 HWND hConfigNameEdit, hServerEdit, hListenEdit, hTokenEdit, hIpEdit, hDnsEdit, hEchEdit;
 HWND hStartBtn, hStopBtn, hLogEdit, hSaveConfigBtn, hLoadConfigBtn;
+HWND hSubscribeUrlEdit, hFetchSubBtn, hNodeList;
 PROCESS_INFORMATION processInfo;
 HANDLE hLogPipe = NULL;
 HANDLE hLogThread = NULL;
@@ -90,6 +96,9 @@ void SetControlValues();
 void InitTrayIcon(HWND hwnd);
 void ShowTrayIcon();
 void RemoveTrayIcon();
+void FetchSubscription();
+void ParseSubscriptionData(const char* data);
+void SaveNodeConfig(const char* nodeName);
 
 int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine, int nCmdShow) {
     (void)hPrevInstance; (void)lpCmdLine;
@@ -118,7 +127,7 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
     
     INITCOMMONCONTROLSEX icex;
     icex.dwSize = sizeof(INITCOMMONCONTROLSEX);
-    icex.dwICC = ICC_WIN95_CLASSES | ICC_STANDARD_CLASSES;
+    icex.dwICC = ICC_WIN95_CLASSES | ICC_STANDARD_CLASSES | ICC_LISTVIEW_CLASSES;
     InitCommonControlsEx(&icex);
 
     hFontUI = CreateFont(Scale(19), 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE, 
@@ -144,7 +153,7 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
     if (!RegisterClass(&wc)) return 1;
 
     int winWidth = Scale(900);
-    int winHeight = Scale(720);
+    int winHeight = Scale(800);
     int screenW = GetSystemMetrics(SM_CXSCREEN);
     int screenH = GetSystemMetrics(SM_CYSCREEN);
 
@@ -305,6 +314,46 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam) 
                     LoadConfigFromFile();
                     SetControlValues();
                     break;
+
+                case ID_FETCH_SUB_BTN:
+                    FetchSubscription();
+                    break;
+
+                case ID_NODE_LIST:
+                    if (HIWORD(wParam) == LBN_DBLCLK) {
+                        int sel = SendMessage(hNodeList, LB_GETCURSEL, 0, 0);
+                        if (sel != LB_ERR) {
+                            char nodeName[MAX_SMALL_LEN];
+                            SendMessage(hNodeList, LB_GETTEXT, sel, (LPARAM)nodeName);
+                            
+                            // 加载对应的配置文件
+                            char fileName[MAX_PATH];
+                            snprintf(fileName, MAX_PATH, "nodes/%s.ini", nodeName);
+                            
+                            FILE* f = fopen(fileName, "r");
+                            if (f) {
+                                char line[MAX_URL_LEN];
+                                while (fgets(line, sizeof(line), f)) {
+                                    char* val = strchr(line, '=');
+                                    if (!val) continue;
+                                    *val++ = 0;
+                                    if (val[strlen(val)-1] == '\n') val[strlen(val)-1] = 0;
+
+                                    if (!strcmp(line, "configName")) strcpy(currentConfig.configName, val);
+                                    else if (!strcmp(line, "server")) strcpy(currentConfig.server, val);
+                                    else if (!strcmp(line, "listen")) strcpy(currentConfig.listen, val);
+                                    else if (!strcmp(line, "token")) strcpy(currentConfig.token, val);
+                                    else if (!strcmp(line, "ip")) strcpy(currentConfig.ip, val);
+                                    else if (!strcmp(line, "dns")) strcpy(currentConfig.dns, val);
+                                    else if (!strcmp(line, "ech")) strcpy(currentConfig.ech, val);
+                                }
+                                fclose(f);
+                                SetControlValues();
+                                AppendLog("[订阅] 已加载节点配置\r\n");
+                            }
+                        }
+                    }
+                    break;
             }
             break;
 
@@ -341,7 +390,7 @@ void CreateLabelAndEdit(HWND parent, const char* labelText, int x, int y, int w,
     *outEdit = CreateWindow("EDIT", "", style, 
         x + Scale(150), y, w - Scale(150), h, parent, (HMENU)(intptr_t)editId, NULL, NULL);
     SendMessage(*outEdit, WM_SETFONT, (WPARAM)hFontUI, TRUE);
-    SendMessage(*outEdit, EM_SETLIMITTEXT, (editId == ID_SERVER_EDIT || editId == ID_TOKEN_EDIT) ? MAX_URL_LEN : MAX_SMALL_LEN, 0);
+    SendMessage(*outEdit, EM_SETLIMITTEXT, (editId == ID_SERVER_EDIT || editId == ID_TOKEN_EDIT || editId == ID_SUBSCRIBE_URL_EDIT) ? MAX_URL_LEN : MAX_SMALL_LEN, 0);
 }
 
 void CreateControls(HWND hwnd) {
@@ -354,6 +403,31 @@ void CreateControls(HWND hwnd) {
     int lineGap = Scale(10);
     int editH = Scale(26);
     int curY = margin;
+
+    // 订阅功能组
+    int groupSubH = Scale(140);
+    HWND hGroupSub = CreateWindow("BUTTON", "订阅管理", WS_VISIBLE | WS_CHILD | BS_GROUPBOX,
+        margin, curY, groupW, groupSubH, hwnd, NULL, NULL, NULL);
+    SendMessage(hGroupSub, WM_SETFONT, (WPARAM)hFontUI, TRUE);
+    
+    int innerY = curY + Scale(25);
+    CreateLabelAndEdit(hwnd, "订阅链接:", margin + Scale(15), innerY, groupW - Scale(30), editH, ID_SUBSCRIBE_URL_EDIT, &hSubscribeUrlEdit, FALSE);
+    
+    innerY += lineHeight + lineGap;
+    
+    hFetchSubBtn = CreateWindow("BUTTON", "获取订阅", WS_VISIBLE | WS_CHILD | BS_PUSHBUTTON,
+        margin + Scale(165), innerY, Scale(120), Scale(32), hwnd, (HMENU)ID_FETCH_SUB_BTN, NULL, NULL);
+    SendMessage(hFetchSubBtn, WM_SETFONT, (WPARAM)hFontUI, TRUE);
+    
+    HWND hNodeLabel = CreateWindow("STATIC", "节点列表(双击加载):", WS_VISIBLE | WS_CHILD | SS_LEFT, 
+        margin + Scale(15), innerY + Scale(40), Scale(140), Scale(20), hwnd, NULL, NULL, NULL);
+    SendMessage(hNodeLabel, WM_SETFONT, (WPARAM)hFontUI, TRUE);
+    
+    hNodeList = CreateWindow("LISTBOX", "", WS_VISIBLE | WS_CHILD | WS_BORDER | WS_VSCROLL | LBS_NOTIFY,
+        margin + Scale(165), innerY + Scale(37), groupW - Scale(180), Scale(50), hwnd, (HMENU)ID_NODE_LIST, NULL, NULL);
+    SendMessage(hNodeList, WM_SETFONT, (WPARAM)hFontUI, TRUE);
+
+    curY += groupSubH + Scale(15);
 
     // 配置名称
     HWND hConfigLabel = CreateWindow("STATIC", "配置名称:", WS_VISIBLE | WS_CHILD | SS_LEFT, 
@@ -372,7 +446,7 @@ void CreateControls(HWND hwnd) {
         margin, curY, groupW, group1H, hwnd, NULL, NULL, NULL);
     SendMessage(hGroup1, WM_SETFONT, (WPARAM)hFontUI, TRUE);
     
-    int innerY = curY + Scale(25);
+    innerY = curY + Scale(25);
 
     CreateLabelAndEdit(hwnd, "服务地址:", margin + Scale(15), innerY, groupW - Scale(30), editH, ID_SERVER_EDIT, &hServerEdit, FALSE);
     innerY += lineHeight + lineGap;
@@ -414,12 +488,10 @@ void CreateControls(HWND hwnd) {
     SendMessage(hStopBtn, WM_SETFONT, (WPARAM)hFontUI, TRUE);
     EnableWindow(hStopBtn, FALSE);
 
-    // 保存配置按钮
     hSaveConfigBtn = CreateWindow("BUTTON", "保存配置", WS_VISIBLE | WS_CHILD | BS_PUSHBUTTON,
         startX + (btnW + btnGap) * 2, curY, btnW, btnH, hwnd, (HMENU)ID_SAVE_CONFIG_BTN, NULL, NULL);
     SendMessage(hSaveConfigBtn, WM_SETFONT, (WPARAM)hFontUI, TRUE);
 
-    // 加载配置按钮
     hLoadConfigBtn = CreateWindow("BUTTON", "加载配置", WS_VISIBLE | WS_CHILD | BS_PUSHBUTTON,
         startX + (btnW + btnGap) * 3, curY, btnW, btnH, hwnd, (HMENU)ID_LOAD_CONFIG_BTN, NULL, NULL);
     SendMessage(hLoadConfigBtn, WM_SETFONT, (WPARAM)hFontUI, TRUE);
@@ -438,7 +510,7 @@ void CreateControls(HWND hwnd) {
 
     hLogEdit = CreateWindow("EDIT", "", 
         WS_VISIBLE | WS_CHILD | WS_BORDER | WS_VSCROLL | ES_MULTILINE | ES_READONLY, 
-        margin, curY, winW - (margin * 2), Scale(200), hwnd, (HMENU)ID_LOG_EDIT, NULL, NULL);
+        margin, curY, winW - (margin * 2), Scale(150), hwnd, (HMENU)ID_LOG_EDIT, NULL, NULL);
     SendMessage(hLogEdit, WM_SETFONT, (WPARAM)hFontLog, TRUE);
     SendMessage(hLogEdit, EM_SETLIMITTEXT, 0, 0);
 }
@@ -500,12 +572,11 @@ void StartProcess() {
         APPEND_ARG("-dns", currentConfig.dns);
     }
     
-    // 检测DNS是否为IP格式，如果是则添加 -insecure-dns 参数
     if (strlen(currentConfig.dns) > 0) {
         char* firstChar = currentConfig.dns;
         if (*firstChar >= '0' && *firstChar <= '9') {
             strcat(cmdLine, " -insecure-dns");
-            AppendLog("[提示] 检测到IP格式DNS，已自动跳过TLS证书验证\r\n");
+            AppendLog("[提示] 检测到IP格式DNS,已自动跳过TLS证书验证\r\n");
         }
     }
     
@@ -713,23 +784,187 @@ void LoadConfigFromFile() {
     }
     fclose(f);
     
-    // 检查进程是否正在运行
     BOOL wasRunning = isProcessRunning;
     
-    // 如果进程正在运行,先停止它
     if (wasRunning) {
         AppendLog("[配置] 检测到进程运行中,正在停止...\r\n");
         StopProcess();
-        Sleep(500); // 等待进程完全停止
+        Sleep(500);
     }
     
     MessageBox(hMainWindow, "配置已加载", "成功", MB_OK | MB_ICONINFORMATION);
     AppendLog("[配置] 已加载配置文件\r\n");
     
-    // 如果之前进程在运行,则自动重启
     if (wasRunning) {
         AppendLog("[配置] 正在使用新配置重启进程...\r\n");
-        Sleep(200); // 短暂延迟确保UI更新
+        Sleep(200);
         StartProcess();
     }
+}
+
+void SaveNodeConfig(const char* nodeName) {
+    CreateDirectory("nodes", NULL);
+    
+    char fileName[MAX_PATH];
+    snprintf(fileName, MAX_PATH, "nodes/%s.ini", nodeName);
+    
+    FILE* f = fopen(fileName, "w");
+    if (!f) return;
+    
+    fprintf(f, "[ECHTunnel]\nconfigName=%s\nserver=%s\nlisten=%s\ntoken=%s\nip=%s\ndns=%s\nech=%s\n",
+        nodeName, currentConfig.server, currentConfig.listen, currentConfig.token, 
+        currentConfig.ip, currentConfig.dns, currentConfig.ech);
+    fclose(f);
+}
+
+void ParseSubscriptionData(const char* data) {
+    if (!data || strlen(data) == 0) {
+        AppendLog("[订阅] 订阅数据为空\r\n");
+        return;
+    }
+    
+    SendMessage(hNodeList, LB_RESETCONTENT, 0, 0);
+    
+    char* dataCopy = strdup(data);
+    if (!dataCopy) return;
+    
+    char* line = strtok(dataCopy, "\r\n");
+    int nodeCount = 0;
+    
+    while (line != NULL) {
+        // 跳过空行和注释
+        if (strlen(line) > 0 && line[0] != '#' && line[0] != ';') {
+            // 解析格式: 节点名称|服务地址|token|ip|dns|ech
+            char nodeName[MAX_SMALL_LEN] = {0};
+            char server[MAX_URL_LEN] = {0};
+            char token[MAX_URL_LEN] = {0};
+            char ip[MAX_SMALL_LEN] = {0};
+            char dns[MAX_SMALL_LEN] = {0};
+            char ech[MAX_SMALL_LEN] = {0};
+            
+            char* parts[6] = {nodeName, server, token, ip, dns, ech};
+            int partIndex = 0;
+            char* p = line;
+            char* start = line;
+            
+            while (*p && partIndex < 6) {
+                if (*p == '|') {
+                    size_t len = p - start;
+                    if (len > 0) {
+                        if (partIndex == 0) strncpy(nodeName, start, len < MAX_SMALL_LEN ? len : MAX_SMALL_LEN - 1);
+                        else if (partIndex == 1) strncpy(server, start, len < MAX_URL_LEN ? len : MAX_URL_LEN - 1);
+                        else if (partIndex == 2) strncpy(token, start, len < MAX_URL_LEN ? len : MAX_URL_LEN - 1);
+                        else if (partIndex == 3) strncpy(ip, start, len < MAX_SMALL_LEN ? len : MAX_SMALL_LEN - 1);
+                        else if (partIndex == 4) strncpy(dns, start, len < MAX_SMALL_LEN ? len : MAX_SMALL_LEN - 1);
+                    }
+                    partIndex++;
+                    start = p + 1;
+                }
+                p++;
+            }
+            
+            // 最后一个字段
+            if (partIndex < 6 && *start) {
+                if (partIndex == 5) strncpy(ech, start, MAX_SMALL_LEN - 1);
+            }
+            
+            // 保存节点配置
+            if (strlen(nodeName) > 0 && strlen(server) > 0) {
+                strcpy(currentConfig.configName, nodeName);
+                strcpy(currentConfig.server, server);
+                strcpy(currentConfig.token, token);
+                strcpy(currentConfig.ip, ip);
+                
+                // 使用默认值如果为空
+                if (strlen(dns) == 0) {
+                    strcpy(currentConfig.dns, "dns.alidns.com/dns-query");
+                } else {
+                    strcpy(currentConfig.dns, dns);
+                }
+                
+                if (strlen(ech) == 0) {
+                    strcpy(currentConfig.ech, "cloudflare-ech.com");
+                } else {
+                    strcpy(currentConfig.ech, ech);
+                }
+                
+                SaveNodeConfig(nodeName);
+                SendMessage(hNodeList, LB_ADDSTRING, 0, (LPARAM)nodeName);
+                nodeCount++;
+            }
+        }
+        line = strtok(NULL, "\r\n");
+    }
+    
+    free(dataCopy);
+    
+    char logMsg[256];
+    snprintf(logMsg, sizeof(logMsg), "[订阅] 成功解析 %d 个节点\r\n", nodeCount);
+    AppendLog(logMsg);
+    
+    if (nodeCount > 0) {
+        MessageBox(hMainWindow, "订阅获取成功", "成功", MB_OK | MB_ICONINFORMATION);
+    } else {
+        MessageBox(hMainWindow, "未找到有效节点", "提示", MB_OK | MB_ICONWARNING);
+    }
+}
+
+void FetchSubscription() {
+    char url[MAX_URL_LEN];
+    GetWindowText(hSubscribeUrlEdit, url, sizeof(url));
+    
+    if (strlen(url) == 0) {
+        MessageBox(hMainWindow, "请输入订阅链接", "提示", MB_OK | MB_ICONWARNING);
+        return;
+    }
+    
+    AppendLog("[订阅] 正在获取订阅...\r\n");
+    
+    HINTERNET hInternet = InternetOpen("ECHWorkerClient", INTERNET_OPEN_TYPE_PRECONFIG, NULL, NULL, 0);
+    if (!hInternet) {
+        AppendLog("[订阅] 初始化网络失败\r\n");
+        return;
+    }
+    
+    HINTERNET hConnect = InternetOpenUrl(hInternet, url, NULL, 0, 
+        INTERNET_FLAG_RELOAD | INTERNET_FLAG_NO_CACHE_WRITE, 0);
+    
+    if (!hConnect) {
+        AppendLog("[订阅] 连接订阅地址失败\r\n");
+        InternetCloseHandle(hInternet);
+        return;
+    }
+    
+    char* buffer = (char*)malloc(1024 * 1024); // 1MB buffer
+    if (!buffer) {
+        InternetCloseHandle(hConnect);
+        InternetCloseHandle(hInternet);
+        return;
+    }
+    
+    DWORD bytesRead = 0;
+    DWORD totalRead = 0;
+    char tempBuf[4096];
+    
+    buffer[0] = 0;
+    
+    while (InternetReadFile(hConnect, tempBuf, sizeof(tempBuf) - 1, &bytesRead) && bytesRead > 0) {
+        tempBuf[bytesRead] = 0;
+        if (totalRead + bytesRead < 1024 * 1024 - 1) {
+            strcat(buffer, tempBuf);
+            totalRead += bytesRead;
+        }
+    }
+    
+    InternetCloseHandle(hConnect);
+    InternetCloseHandle(hInternet);
+    
+    if (totalRead > 0) {
+        ParseSubscriptionData(buffer);
+    } else {
+        AppendLog("[订阅] 获取订阅数据失败\r\n");
+        MessageBox(hMainWindow, "获取订阅失败", "错误", MB_OK | MB_ICONERROR);
+    }
+    
+    free(buffer);
 }
