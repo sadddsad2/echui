@@ -761,6 +761,112 @@ void EndDialog(HWND hwnd, int result) {
     DestroyWindow(hwnd);
 }
 
+// 需要在文件开头添加这些声明
+typedef struct {
+    char* configName;
+    HWND hEdit;
+    BOOL result;
+} DialogData;
+
+LRESULT CALLBACK SaveConfigDialogProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam);
+
+// 对话框窗口过程
+LRESULT CALLBACK SaveConfigDialogProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
+    DialogData* pData = (DialogData*)GetWindowLongPtr(hwnd, GWLP_USERDATA);
+    
+    switch (msg) {
+        case WM_INITDIALOG:
+            SetWindowLongPtr(hwnd, GWLP_USERDATA, lParam);
+            pData = (DialogData*)lParam;
+            
+            // 创建标签
+            HWND hLabel = CreateWindow("STATIC", "请输入配置名称:",
+                WS_VISIBLE | WS_CHILD,
+                Scale(20), Scale(20), Scale(300), Scale(20),
+                hwnd, NULL, NULL, NULL);
+            SendMessage(hLabel, WM_SETFONT, (WPARAM)hFontUI, TRUE);
+            
+            // 创建输入框
+            pData->hEdit = CreateWindow("EDIT", pData->configName,
+                WS_VISIBLE | WS_CHILD | WS_BORDER | WS_TABSTOP | ES_AUTOHSCROLL,
+                Scale(20), Scale(50), Scale(360), Scale(25),
+                hwnd, (HMENU)1, NULL, NULL);
+            SendMessage(pData->hEdit, WM_SETFONT, (WPARAM)hFontUI, TRUE);
+            SendMessage(pData->hEdit, EM_SETLIMITTEXT, MAX_SMALL_LEN - 1, 0);
+            
+            // 创建确定按钮
+            HWND hOkBtn = CreateWindow("BUTTON", "确定",
+                WS_VISIBLE | WS_CHILD | WS_TABSTOP | BS_DEFPUSHBUTTON,
+                Scale(120), Scale(85), Scale(80), Scale(30),
+                hwnd, (HMENU)IDOK, NULL, NULL);
+            SendMessage(hOkBtn, WM_SETFONT, (WPARAM)hFontUI, TRUE);
+            
+            // 创建取消按钮
+            HWND hCancelBtn = CreateWindow("BUTTON", "取消",
+                WS_VISIBLE | WS_CHILD | WS_TABSTOP | BS_PUSHBUTTON,
+                Scale(220), Scale(85), Scale(80), Scale(30),
+                hwnd, (HMENU)IDCANCEL, NULL, NULL);
+            SendMessage(hCancelBtn, WM_SETFONT, (WPARAM)hFontUI, TRUE);
+            
+            // 设置焦点并选中文本
+            SetFocus(pData->hEdit);
+            SendMessage(pData->hEdit, EM_SETSEL, 0, -1);
+            
+            // 居中对话框
+            RECT rcParent, rcDialog;
+            GetWindowRect(GetParent(hwnd), &rcParent);
+            GetWindowRect(hwnd, &rcDialog);
+            int x = rcParent.left + (rcParent.right - rcParent.left - (rcDialog.right - rcDialog.left)) / 2;
+            int y = rcParent.top + (rcParent.bottom - rcParent.top - (rcDialog.bottom - rcDialog.top)) / 2;
+            SetWindowPos(hwnd, NULL, x, y, 0, 0, SWP_NOSIZE | SWP_NOZORDER);
+            
+            return FALSE;
+            
+        case WM_COMMAND:
+            if (LOWORD(wParam) == IDOK) {
+                if (!pData) break;
+                
+                char tempName[MAX_SMALL_LEN];
+                GetWindowText(pData->hEdit, tempName, sizeof(tempName));
+                
+                // 去除首尾空格
+                char* start = tempName;
+                while (*start == ' ' || *start == '\t') start++;
+                char* end = start + strlen(start) - 1;
+                while (end > start && (*end == ' ' || *end == '\t' || *end == '\r' || *end == '\n')) end--;
+                *(end + 1) = '\0';
+                
+                if (start != tempName) {
+                    memmove(tempName, start, strlen(start) + 1);
+                }
+                
+                if (strlen(tempName) == 0) {
+                    MessageBox(hwnd, "配置名称不能为空", "提示", MB_OK | MB_ICONWARNING);
+                    SetFocus(pData->hEdit);
+                    return TRUE;
+                }
+                
+                strcpy(pData->configName, tempName);
+                pData->result = TRUE;
+                DestroyWindow(hwnd);
+                return TRUE;
+            }
+            else if (LOWORD(wParam) == IDCANCEL) {
+                if (pData) pData->result = FALSE;
+                DestroyWindow(hwnd);
+                return TRUE;
+            }
+            break;
+            
+        case WM_CLOSE:
+            if (pData) pData->result = FALSE;
+            DestroyWindow(hwnd);
+            return TRUE;
+    }
+    
+    return FALSE;
+}
+
 // SaveConfigToFile 函数
 void SaveConfigToFile() {
     char newConfigName[MAX_SMALL_LEN];
