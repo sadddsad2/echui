@@ -1,5 +1,4 @@
 #pragma comment(linker,"\"/manifestdependency:type='win32' name='Microsoft.Windows.Common-Controls' version='6.0.0.0' processorArchitecture='*' publicKeyToken='6595b64144ccf1df' language='*'\"")
-#pragma comment(lib, "wininet.lib")
 
 #include <windows.h>
 #include <commctrl.h>
@@ -588,7 +587,9 @@ void StartProcess() {
     HANDLE hRead, hWrite;
     if (!CreatePipe(&hRead, &hWrite, &sa, 0)) return;
 
-    STARTUPINFO si = { sizeof(si) };
+    STARTUPINFO si;
+    ZeroMemory(&si, sizeof(si));
+    si.cb = sizeof(si);
     si.dwFlags = STARTF_USESTDHANDLES | STARTF_USESHOWWINDOW;
     si.hStdOutput = hWrite;
     si.hStdError = hWrite;
@@ -610,7 +611,6 @@ void StartProcess() {
         AppendLog("[错误] 启动失败,请检查配置。\r\n");
     }
 }
-
 void StopProcess() {
     isProcessRunning = FALSE;
 
@@ -802,21 +802,6 @@ void LoadConfigFromFile() {
     }
 }
 
-void SaveNodeConfig(const char* nodeName) {
-    CreateDirectory("nodes", NULL);
-    
-    char fileName[MAX_PATH];
-    snprintf(fileName, MAX_PATH, "nodes/%s.ini", nodeName);
-    
-    FILE* f = fopen(fileName, "w");
-    if (!f) return;
-    
-    fprintf(f, "[ECHTunnel]\nconfigName=%s\nserver=%s\nlisten=%s\ntoken=%s\nip=%s\ndns=%s\nech=%s\n",
-        nodeName, currentConfig.server, currentConfig.listen, currentConfig.token, 
-        currentConfig.ip, currentConfig.dns, currentConfig.ech);
-    fclose(f);
-}
-
 void ParseSubscriptionData(const char* data) {
     if (!data || strlen(data) == 0) {
         AppendLog("[订阅] 订阅数据为空\r\n");
@@ -833,8 +818,8 @@ void ParseSubscriptionData(const char* data) {
     
     while (line != NULL) {
         // 跳过空行和注释
-        if (strlen(line) > 0 && line[0] != '#' && line[0] != ';') {
-            // 解析格式: 节点名称|服务地址|token|ip|dns|ech
+        if (strlen(line) > 0 && line[0] != ';' && strncmp(line, "//", 2) != 0) {
+            // 格式: ech://服务地址|token|优选IP|dns|ech域名#节点名称
             char nodeName[MAX_SMALL_LEN] = {0};
             char server[MAX_URL_LEN] = {0};
             char token[MAX_URL_LEN] = {0};
@@ -842,30 +827,72 @@ void ParseSubscriptionData(const char* data) {
             char dns[MAX_SMALL_LEN] = {0};
             char ech[MAX_SMALL_LEN] = {0};
             
-            char* parts[6] = {nodeName, server, token, ip, dns, ech};
-            int partIndex = 0;
-            char* p = line;
-            char* start = line;
+            // 先提取节点名称（#后面的部分）
+            char* nameStart = strchr(line, '#');
+            if (nameStart) {
+                strncpy(nodeName, nameStart + 1, MAX_SMALL_LEN - 1);
+                nodeName[MAX_SMALL_LEN - 1] = '\0';
+                *nameStart = '\0';
+            }
             
-            while (*p && partIndex < 6) {
-                if (*p == '|') {
-                    size_t len = p - start;
-                    if (len > 0) {
-                        if (partIndex == 0) strncpy(nodeName, start, len < MAX_SMALL_LEN ? len : MAX_SMALL_LEN - 1);
-                        else if (partIndex == 1) strncpy(server, start, len < MAX_URL_LEN ? len : MAX_URL_LEN - 1);
-                        else if (partIndex == 2) strncpy(token, start, len < MAX_URL_LEN ? len : MAX_URL_LEN - 1);
-                        else if (partIndex == 3) strncpy(ip, start, len < MAX_SMALL_LEN ? len : MAX_SMALL_LEN - 1);
-                        else if (partIndex == 4) strncpy(dns, start, len < MAX_SMALL_LEN ? len : MAX_SMALL_LEN - 1);
+            // 检查是否以 ech:// 开头
+            char* p = line;
+            if (strncmp(p, "ech://", 6) == 0) {
+                p += 6;
+            }
+            
+            // 解析各个字段
+            int partIndex = 0;
+            char* start = p;
+            
+            while (*p) {
+                if (*p == '|' || *(p + 1) == '\0') {
+                    size_t len = (*p == '|') ? (size_t)(p - start) : (size_t)(p - start + 1);
+                    
+                    if (partIndex == 0 && len > 0 && len < MAX_URL_LEN) {
+                        strncpy(server, start, len);
+                        server[len] = '\0';
+                    } else if (partIndex == 1 && len > 0 && len < MAX_URL_LEN) {
+                        strncpy(token, start, len);
+                        token[len] = '\0';
+                    } else if (partIndex == 2 && len > 0 && len < MAX_SMALL_LEN) {
+                        strncpy(ip, start, len);
+                        ip[len] = '\0';
+                    } else if (partIndex == 3 && len > 0 && len < MAX_SMALL_LEN) {
+                        strncpy(dns, start, len);
+                        dns[len] = '\0';
+                    } else if (partIndex == 4 && len > 0 && len < MAX_SMALL_LEN) {
+                        strncpy(ech, start, len);
+                        ech[len] = '\0';
                     }
-                    partIndex++;
-                    start = p + 1;
+                    
+                    if (*p == '|') {
+                        partIndex++;
+                        start = p + 1;
+                    }
                 }
                 p++;
             }
             
-            // 最后一个字段
-            if (partIndex < 6 && *start) {
-                if (partIndex == 5) strncpy(ech, start, MAX_SMALL_LEN - 1);
+            // 如果没有|分隔符，整个作为server
+            if (partIndex == 0 && strlen(server) == 0) {
+                strncpy(server, start, MAX_URL_LEN - 1);
+                server[MAX_URL_LEN - 1] = '\0';
+            }
+            
+            // 如果节点名称为空，使用服务地址作为名称
+            if (strlen(nodeName) == 0 && strlen(server) > 0) {
+                char* colonPos = strchr(server, ':');
+                if (colonPos) {
+                    size_t hostLen = (size_t)(colonPos - server);
+                    if (hostLen > 0 && hostLen < MAX_SMALL_LEN) {
+                        strncpy(nodeName, server, hostLen);
+                        nodeName[hostLen] = '\0';
+                    }
+                } else {
+                    strncpy(nodeName, server, MAX_SMALL_LEN - 1);
+                    nodeName[MAX_SMALL_LEN - 1] = '\0';
+                }
             }
             
             // 保存节点配置
@@ -875,7 +902,6 @@ void ParseSubscriptionData(const char* data) {
                 strcpy(currentConfig.token, token);
                 strcpy(currentConfig.ip, ip);
                 
-                // 使用默认值如果为空
                 if (strlen(dns) == 0) {
                     strcpy(currentConfig.dns, "dns.alidns.com/dns-query");
                 } else {
