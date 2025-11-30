@@ -37,7 +37,7 @@ int Scale(int x) {
     return (x * g_scale) / 100;
 }
 
-#define ID_CONFIG_NAME_LABEL 999
+#define ID_CONFIG_NAME_EDIT 1000
 #define ID_SERVER_EDIT      1001
 #define ID_LISTEN_EDIT      1002
 #define ID_TOKEN_EDIT       1003
@@ -52,7 +52,7 @@ int Scale(int x) {
 #define ID_LOAD_CONFIG_BTN  1015
 
 HWND hMainWindow;
-HWND hConfigNameLabel, hServerEdit, hListenEdit, hTokenEdit, hIpEdit, hDnsEdit, hEchEdit;
+HWND hConfigNameEdit, hServerEdit, hListenEdit, hTokenEdit, hIpEdit, hDnsEdit, hEchEdit;
 HWND hStartBtn, hStopBtn, hLogEdit, hSaveConfigBtn, hLoadConfigBtn;
 PROCESS_INFORMATION processInfo;
 HANDLE hLogPipe = NULL;
@@ -71,7 +71,7 @@ typedef struct {
 } Config;
 
 Config currentConfig = {
-    "默认配置", "dns.alidns.com/dns-query", "cloudflare-ech.com", "example.com:443", "", "127.0.0.1:30000", ""
+    "默认配置", "223.5.5.5/dns-query", "cloudflare-ech.com", "example.com:443", "", "127.0.0.1:30000", ""
 };
 
 LRESULT CALLBACK WindowProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam);
@@ -90,7 +90,6 @@ void SetControlValues();
 void InitTrayIcon(HWND hwnd);
 void ShowTrayIcon();
 void RemoveTrayIcon();
-void UpdateConfigNameDisplay();
 
 int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine, int nCmdShow) {
     (void)hPrevInstance; (void)lpCmdLine;
@@ -200,21 +199,12 @@ void RemoveTrayIcon() {
     Shell_NotifyIcon(NIM_DELETE, &nid);
 }
 
-void UpdateConfigNameDisplay() {
-    if (hConfigNameLabel) {
-        char displayText[MAX_SMALL_LEN + 50];
-        snprintf(displayText, sizeof(displayText), "当前配置: %s", currentConfig.configName);
-        SetWindowText(hConfigNameLabel, displayText);
-    }
-}
-
 LRESULT CALLBACK WindowProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam) {
     switch (uMsg) {
         case WM_CREATE:
             CreateControls(hwnd);
             LoadConfig();
             SetControlValues();
-            UpdateConfigNameDisplay();
             break;
 
         case WM_SYSCOMMAND:
@@ -314,7 +304,6 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam) 
                 case ID_LOAD_CONFIG_BTN:
                     LoadConfigFromFile();
                     SetControlValues();
-                    UpdateConfigNameDisplay();
                     break;
             }
             break;
@@ -340,6 +329,7 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam) 
     }
     return 0;
 }
+
 void CreateLabelAndEdit(HWND parent, const char* labelText, int x, int y, int w, int h, int editId, HWND* outEdit, BOOL numberOnly) {
     HWND hStatic = CreateWindow("STATIC", labelText, WS_VISIBLE | WS_CHILD | SS_LEFT, 
         x, y + Scale(3), Scale(140), Scale(20), parent, NULL, NULL, NULL);
@@ -365,11 +355,15 @@ void CreateControls(HWND hwnd) {
     int editH = Scale(26);
     int curY = margin;
 
-    // 当前配置名称显示（只读标签）
-    hConfigNameLabel = CreateWindow("STATIC", "当前配置: 默认配置", 
-        WS_VISIBLE | WS_CHILD | SS_LEFT, 
-        margin, curY + Scale(3), groupW, Scale(24), hwnd, (HMENU)ID_CONFIG_NAME_LABEL, NULL, NULL);
-    SendMessage(hConfigNameLabel, WM_SETFONT, (WPARAM)hFontUI, TRUE);
+    // 配置名称
+    HWND hConfigLabel = CreateWindow("STATIC", "配置名称:", WS_VISIBLE | WS_CHILD | SS_LEFT, 
+        margin, curY + Scale(3), Scale(80), Scale(20), hwnd, NULL, NULL, NULL);
+    SendMessage(hConfigLabel, WM_SETFONT, (WPARAM)hFontUI, TRUE);
+
+    hConfigNameEdit = CreateWindow("EDIT", "", WS_VISIBLE | WS_CHILD | WS_TABSTOP | WS_BORDER | ES_AUTOHSCROLL,
+        margin + Scale(90), curY, Scale(200), editH, hwnd, (HMENU)ID_CONFIG_NAME_EDIT, NULL, NULL);
+    SendMessage(hConfigNameEdit, WM_SETFONT, (WPARAM)hFontUI, TRUE);
+    SendMessage(hConfigNameEdit, EM_SETLIMITTEXT, MAX_SMALL_LEN, 0);
 
     curY += lineHeight + Scale(5);
 
@@ -402,7 +396,7 @@ void CreateControls(HWND hwnd) {
     CreateLabelAndEdit(hwnd, "ECH域名:", margin + Scale(15), innerY, groupW - Scale(30), editH, ID_ECH_EDIT, &hEchEdit, FALSE);
     innerY += lineHeight + lineGap;
 
-    CreateLabelAndEdit(hwnd, "DNS服务器(仅域名):", margin + Scale(15), innerY, groupW - Scale(30), editH, ID_DNS_EDIT, &hDnsEdit, FALSE);
+    CreateLabelAndEdit(hwnd, "DNS服务器(IP/域名):", margin + Scale(15), innerY, groupW - Scale(30), editH, ID_DNS_EDIT, &hDnsEdit, FALSE);
 
     curY += group2H + Scale(15);
 
@@ -420,10 +414,12 @@ void CreateControls(HWND hwnd) {
     SendMessage(hStopBtn, WM_SETFONT, (WPARAM)hFontUI, TRUE);
     EnableWindow(hStopBtn, FALSE);
 
+    // 保存配置按钮
     hSaveConfigBtn = CreateWindow("BUTTON", "保存配置", WS_VISIBLE | WS_CHILD | BS_PUSHBUTTON,
         startX + (btnW + btnGap) * 2, curY, btnW, btnH, hwnd, (HMENU)ID_SAVE_CONFIG_BTN, NULL, NULL);
     SendMessage(hSaveConfigBtn, WM_SETFONT, (WPARAM)hFontUI, TRUE);
 
+    // 加载配置按钮
     hLoadConfigBtn = CreateWindow("BUTTON", "加载配置", WS_VISIBLE | WS_CHILD | BS_PUSHBUTTON,
         startX + (btnW + btnGap) * 3, curY, btnW, btnH, hwnd, (HMENU)ID_LOAD_CONFIG_BTN, NULL, NULL);
     SendMessage(hLoadConfigBtn, WM_SETFONT, (WPARAM)hFontUI, TRUE);
@@ -449,6 +445,7 @@ void CreateControls(HWND hwnd) {
 
 void GetControlValues() {
     char buf[MAX_URL_LEN];
+    GetWindowText(hConfigNameEdit, currentConfig.configName, sizeof(currentConfig.configName));
     GetWindowText(hServerEdit, buf, sizeof(buf));
     strcpy(currentConfig.server, buf);
 
@@ -462,6 +459,7 @@ void GetControlValues() {
 }
 
 void SetControlValues() {
+    SetWindowText(hConfigNameEdit, currentConfig.configName);
     SetWindowText(hServerEdit, currentConfig.server);
     SetWindowText(hListenEdit, currentConfig.listen);
     SetWindowText(hTokenEdit, currentConfig.token);
@@ -498,16 +496,16 @@ void StartProcess() {
         APPEND_ARG("-ip", currentConfig.ip);
     }
     
-    if (strlen(currentConfig.dns) > 0 && strcmp(currentConfig.dns, "dns.alidns.com/dns-query") != 0) {
+    if (strlen(currentConfig.dns) > 0 && strcmp(currentConfig.dns, "223.5.5.5/dns-query") != 0) {
         APPEND_ARG("-dns", currentConfig.dns);
     }
     
-    // 检测DNS是否为IP格式,如果是则添加 -insecure-dns 参数
+    // 检测DNS是否为IP格式，如果是则添加 -insecure-dns 参数
     if (strlen(currentConfig.dns) > 0) {
         char* firstChar = currentConfig.dns;
         if (*firstChar >= '0' && *firstChar <= '9') {
             strcat(cmdLine, " -insecure-dns");
-            AppendLog("[提示] 检测到IP格式DNS,已自动跳过TLS证书验证\r\n");
+            AppendLog("[提示] 检测到IP格式DNS，已自动跳过TLS证书验证\r\n");
         }
     }
     
@@ -648,342 +646,33 @@ void LoadConfig() {
     }
     fclose(f);
 }
-// 需要在文件开头添加这些声明
-typedef struct {
-    char* configName;
-    HWND hEdit;
-    BOOL result;
-} DialogData;
 
-LRESULT CALLBACK SaveConfigDialogProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam);
-void EndDialog(HWND hwnd, int result);
-
-// 对话框窗口过程
-LRESULT CALLBACK SaveConfigDialogProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
-    DialogData* pData = (DialogData*)GetWindowLongPtr(hwnd, GWLP_USERDATA);
-    
-    switch (msg) {
-        case WM_INITDIALOG:
-            SetWindowLongPtr(hwnd, GWLP_USERDATA, lParam);
-            pData = (DialogData*)lParam;
-            
-            // 创建标签
-            HWND hLabel = CreateWindow("STATIC", "请输入配置名称:",
-                WS_VISIBLE | WS_CHILD,
-                Scale(20), Scale(20), Scale(300), Scale(20),
-                hwnd, NULL, NULL, NULL);
-            SendMessage(hLabel, WM_SETFONT, (WPARAM)hFontUI, TRUE);
-            
-            // 创建输入框
-            pData->hEdit = CreateWindow("EDIT", pData->configName,
-                WS_VISIBLE | WS_CHILD | WS_BORDER | WS_TABSTOP | ES_AUTOHSCROLL,
-                Scale(20), Scale(50), Scale(360), Scale(25),
-                hwnd, (HMENU)1, NULL, NULL);
-            SendMessage(pData->hEdit, WM_SETFONT, (WPARAM)hFontUI, TRUE);
-            SendMessage(pData->hEdit, EM_SETLIMITTEXT, MAX_SMALL_LEN - 1, 0);
-            
-            // 创建确定按钮
-            HWND hOkBtn = CreateWindow("BUTTON", "确定",
-                WS_VISIBLE | WS_CHILD | WS_TABSTOP | BS_DEFPUSHBUTTON,
-                Scale(120), Scale(85), Scale(80), Scale(30),
-                hwnd, (HMENU)IDOK, NULL, NULL);
-            SendMessage(hOkBtn, WM_SETFONT, (WPARAM)hFontUI, TRUE);
-            
-            // 创建取消按钮
-            HWND hCancelBtn = CreateWindow("BUTTON", "取消",
-                WS_VISIBLE | WS_CHILD | WS_TABSTOP | BS_PUSHBUTTON,
-                Scale(220), Scale(85), Scale(80), Scale(30),
-                hwnd, (HMENU)IDCANCEL, NULL, NULL);
-            SendMessage(hCancelBtn, WM_SETFONT, (WPARAM)hFontUI, TRUE);
-            
-            // 设置焦点并选中文本
-            SetFocus(pData->hEdit);
-            SendMessage(pData->hEdit, EM_SETSEL, 0, -1);
-            
-            // 居中对话框
-            RECT rcParent, rcDialog;
-            GetWindowRect(GetParent(hwnd), &rcParent);
-            GetWindowRect(hwnd, &rcDialog);
-            int x = rcParent.left + (rcParent.right - rcParent.left - (rcDialog.right - rcDialog.left)) / 2;
-            int y = rcParent.top + (rcParent.bottom - rcParent.top - (rcDialog.bottom - rcDialog.top)) / 2;
-            SetWindowPos(hwnd, NULL, x, y, 0, 0, SWP_NOSIZE | SWP_NOZORDER);
-            
-            return FALSE;
-            
-        case WM_COMMAND:
-            if (LOWORD(wParam) == IDOK) {
-                if (!pData) break;
-                
-                char tempName[MAX_SMALL_LEN];
-                GetWindowText(pData->hEdit, tempName, sizeof(tempName));
-                
-                // 去除首尾空格
-                char* start = tempName;
-                while (*start == ' ' || *start == '\t') start++;
-                char* end = start + strlen(start) - 1;
-                while (end > start && (*end == ' ' || *end == '\t' || *end == '\r' || *end == '\n')) end--;
-                *(end + 1) = '\0';
-                
-                if (start != tempName) {
-                    memmove(tempName, start, strlen(start) + 1);
-                }
-                
-                if (strlen(tempName) == 0) {
-                    MessageBox(hwnd, "配置名称不能为空", "提示", MB_OK | MB_ICONWARNING);
-                    SetFocus(pData->hEdit);
-                    return TRUE;
-                }
-                
-                strcpy(pData->configName, tempName);
-                pData->result = TRUE;
-                EndDialog(hwnd, IDOK);
-                return TRUE;
-            }
-            else if (LOWORD(wParam) == IDCANCEL) {
-                if (pData) pData->result = FALSE;
-                EndDialog(hwnd, IDCANCEL);
-                return TRUE;
-            }
-            break;
-            
-        case WM_CLOSE:
-            if (pData) pData->result = FALSE;
-            EndDialog(hwnd, IDCANCEL);
-            return TRUE;
-    }
-    
-    return FALSE;
-}
-
-// EndDialog 函数实现
-void EndDialog(HWND hwnd, int result) {
-    (void)result;
-    DestroyWindow(hwnd);
-}
-
-// 需要在文件开头添加这些声明
-typedef struct {
-    char* configName;
-    HWND hEdit;
-    BOOL result;
-} DialogData;
-
-LRESULT CALLBACK SaveConfigDialogProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam);
-
-// 对话框窗口过程
-LRESULT CALLBACK SaveConfigDialogProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
-    DialogData* pData = (DialogData*)GetWindowLongPtr(hwnd, GWLP_USERDATA);
-    
-    switch (msg) {
-        case WM_INITDIALOG:
-            SetWindowLongPtr(hwnd, GWLP_USERDATA, lParam);
-            pData = (DialogData*)lParam;
-            
-            // 创建标签
-            HWND hLabel = CreateWindow("STATIC", "请输入配置名称:",
-                WS_VISIBLE | WS_CHILD,
-                Scale(20), Scale(20), Scale(300), Scale(20),
-                hwnd, NULL, NULL, NULL);
-            SendMessage(hLabel, WM_SETFONT, (WPARAM)hFontUI, TRUE);
-            
-            // 创建输入框
-            pData->hEdit = CreateWindow("EDIT", pData->configName,
-                WS_VISIBLE | WS_CHILD | WS_BORDER | WS_TABSTOP | ES_AUTOHSCROLL,
-                Scale(20), Scale(50), Scale(360), Scale(25),
-                hwnd, (HMENU)1, NULL, NULL);
-            SendMessage(pData->hEdit, WM_SETFONT, (WPARAM)hFontUI, TRUE);
-            SendMessage(pData->hEdit, EM_SETLIMITTEXT, MAX_SMALL_LEN - 1, 0);
-            
-            // 创建确定按钮
-            HWND hOkBtn = CreateWindow("BUTTON", "确定",
-                WS_VISIBLE | WS_CHILD | WS_TABSTOP | BS_DEFPUSHBUTTON,
-                Scale(120), Scale(85), Scale(80), Scale(30),
-                hwnd, (HMENU)IDOK, NULL, NULL);
-            SendMessage(hOkBtn, WM_SETFONT, (WPARAM)hFontUI, TRUE);
-            
-            // 创建取消按钮
-            HWND hCancelBtn = CreateWindow("BUTTON", "取消",
-                WS_VISIBLE | WS_CHILD | WS_TABSTOP | BS_PUSHBUTTON,
-                Scale(220), Scale(85), Scale(80), Scale(30),
-                hwnd, (HMENU)IDCANCEL, NULL, NULL);
-            SendMessage(hCancelBtn, WM_SETFONT, (WPARAM)hFontUI, TRUE);
-            
-            // 设置焦点并选中文本
-            SetFocus(pData->hEdit);
-            SendMessage(pData->hEdit, EM_SETSEL, 0, -1);
-            
-            // 居中对话框
-            RECT rcParent, rcDialog;
-            GetWindowRect(GetParent(hwnd), &rcParent);
-            GetWindowRect(hwnd, &rcDialog);
-            int x = rcParent.left + (rcParent.right - rcParent.left - (rcDialog.right - rcDialog.left)) / 2;
-            int y = rcParent.top + (rcParent.bottom - rcParent.top - (rcDialog.bottom - rcDialog.top)) / 2;
-            SetWindowPos(hwnd, NULL, x, y, 0, 0, SWP_NOSIZE | SWP_NOZORDER);
-            
-            return FALSE;
-            
-        case WM_COMMAND:
-            if (LOWORD(wParam) == IDOK) {
-                if (!pData) break;
-                
-                char tempName[MAX_SMALL_LEN];
-                GetWindowText(pData->hEdit, tempName, sizeof(tempName));
-                
-                // 去除首尾空格
-                char* start = tempName;
-                while (*start == ' ' || *start == '\t') start++;
-                char* end = start + strlen(start) - 1;
-                while (end > start && (*end == ' ' || *end == '\t' || *end == '\r' || *end == '\n')) end--;
-                *(end + 1) = '\0';
-                
-                if (start != tempName) {
-                    memmove(tempName, start, strlen(start) + 1);
-                }
-                
-                if (strlen(tempName) == 0) {
-                    MessageBox(hwnd, "配置名称不能为空", "提示", MB_OK | MB_ICONWARNING);
-                    SetFocus(pData->hEdit);
-                    return TRUE;
-                }
-                
-                strcpy(pData->configName, tempName);
-                pData->result = TRUE;
-                DestroyWindow(hwnd);
-                return TRUE;
-            }
-            else if (LOWORD(wParam) == IDCANCEL) {
-                if (pData) pData->result = FALSE;
-                DestroyWindow(hwnd);
-                return TRUE;
-            }
-            break;
-            
-        case WM_CLOSE:
-            if (pData) pData->result = FALSE;
-            DestroyWindow(hwnd);
-            return TRUE;
-    }
-    
-    return FALSE;
-}
-
-// SaveConfigToFile 函数
 void SaveConfigToFile() {
-    char newConfigName[MAX_SMALL_LEN];
-    strcpy(newConfigName, currentConfig.configName);
-    
-    DialogData data;
-    data.configName = newConfigName;
-    data.hEdit = NULL;
-    data.result = FALSE;
-    
-    // 注册对话框窗口类
-    static BOOL classRegistered = FALSE;
-    if (!classRegistered) {
-        WNDCLASSEX wc = {0};
-        wc.cbSize = sizeof(WNDCLASSEX);
-        wc.lpfnWndProc = SaveConfigDialogProc;
-        wc.hInstance = GetModuleHandle(NULL);
-        wc.lpszClassName = "SaveConfigDialog";
-        wc.hbrBackground = (HBRUSH)(COLOR_BTNFACE + 1);
-        wc.hCursor = LoadCursor(NULL, IDC_ARROW);
-        wc.hIcon = LoadIcon(NULL, IDI_APPLICATION);
-        
-        if (RegisterClassEx(&wc)) {
-            classRegistered = TRUE;
-        } else {
-            MessageBox(hMainWindow, "注册对话框类失败", "错误", MB_OK | MB_ICONERROR);
-            return;
-        }
-    }
-    
-    // 创建模态对话框
-    HWND hDialog = CreateWindowEx(
-        WS_EX_DLGMODALFRAME | WS_EX_TOPMOST,
-        "SaveConfigDialog", 
-        "输入配置名称",
-        WS_POPUP | WS_CAPTION | WS_SYSMENU | WS_VISIBLE,
-        0, 0, Scale(400), Scale(150),
-        hMainWindow, 
-        NULL, 
-        GetModuleHandle(NULL), 
-        NULL
-    );
-    
-    if (!hDialog) {
-        MessageBox(hMainWindow, "创建对话框失败", "错误", MB_OK | MB_ICONERROR);
-        return;
-    }
-    
-    // 发送 WM_INITDIALOG 消息
-    SendMessage(hDialog, WM_INITDIALOG, 0, (LPARAM)&data);
-    
-    // 禁用父窗口
-    EnableWindow(hMainWindow, FALSE);
-    
-    // 消息循环
-    MSG msg;
-    BOOL dialogActive = TRUE;
-    
-    while (dialogActive && GetMessage(&msg, NULL, 0, 0)) {
-        // 检查对话框是否还存在
-        if (!IsWindow(hDialog)) {
-            dialogActive = FALSE;
-            break;
-        }
-        
-        // 处理对话框消息
-        if (IsDialogMessage(hDialog, &msg)) {
-            continue;
-        }
-        
-        TranslateMessage(&msg);
-        DispatchMessage(&msg);
-    }
-    
-    // 重新启用父窗口
-    EnableWindow(hMainWindow, TRUE);
-    SetForegroundWindow(hMainWindow);
-    
-    // 如果对话框还在，销毁它
-    if (IsWindow(hDialog)) {
-        DestroyWindow(hDialog);
-    }
-    
-    if (!data.result) {
-        AppendLog("[配置] 取消保存配置\r\n");
-        return;
-    }
-    
-    // 更新当前配置名称
-    strcpy(currentConfig.configName, newConfigName);
-    UpdateConfigNameDisplay();
-    
-    // 保存到文件
     char fileName[MAX_PATH];
-    snprintf(fileName, MAX_PATH, "%s.ini", newConfigName);
+    if (strlen(currentConfig.configName) == 0) {
+        MessageBox(hMainWindow, "请输入配置名称", "提示", MB_OK | MB_ICONWARNING);
+        return;
+    }
+    
+    snprintf(fileName, MAX_PATH, "%s.ini", currentConfig.configName);
     
     FILE* f = fopen(fileName, "w");
     if (!f) {
         MessageBox(hMainWindow, "保存配置失败", "错误", MB_OK | MB_ICONERROR);
-        AppendLog("[配置] 保存配置失败\r\n");
         return;
     }
     
-    // ECHWorkerClient 版本 - 没有 connections 字段
     fprintf(f, "[ECHTunnel]\nconfigName=%s\nserver=%s\nlisten=%s\ntoken=%s\nip=%s\ndns=%s\nech=%s\n",
         currentConfig.configName, currentConfig.server, currentConfig.listen, currentConfig.token, 
         currentConfig.ip, currentConfig.dns, currentConfig.ech);
     fclose(f);
     
-    char msg_text[512];
-    snprintf(msg_text, sizeof(msg_text), "配置已保存到: %s", fileName);
-    MessageBox(hMainWindow, msg_text, "成功", MB_OK | MB_ICONINFORMATION);
-    
-    char logMsg[600];
-    snprintf(logMsg, sizeof(logMsg), "[配置] 已保存配置: %s\r\n", fileName);
-    AppendLog(logMsg);
+    char msg[512];
+    snprintf(msg, sizeof(msg), "配置已保存到: %s", fileName);
+    MessageBox(hMainWindow, msg, "成功", MB_OK | MB_ICONINFORMATION);
+    AppendLog("[配置] 已保存配置文件\r\n");
 }
+
 void LoadConfigFromFile() {
     OPENFILENAME ofn;
     char fileName[MAX_PATH] = "";
@@ -1004,7 +693,6 @@ void LoadConfigFromFile() {
     FILE* f = fopen(fileName, "r");
     if (!f) {
         MessageBox(hMainWindow, "无法打开配置文件", "错误", MB_OK | MB_ICONERROR);
-        AppendLog("[配置] 加载配置失败: 无法打开文件\r\n");
         return;
     }
     
@@ -1025,18 +713,23 @@ void LoadConfigFromFile() {
     }
     fclose(f);
     
-    MessageBox(hMainWindow, "配置已加载", "成功", MB_OK | MB_ICONINFORMATION);
+    // 检查进程是否正在运行
+    BOOL wasRunning = isProcessRunning;
     
-    char logMsg[600];
-    snprintf(logMsg, sizeof(logMsg), "[配置] 已加载配置: %s\r\n", fileName);
-    AppendLog(logMsg);
-    
-    // 如果代理正在运行,则重启
-    if (isProcessRunning) {
-        AppendLog("[系统] 检测到配置变更,正在重启代理...\r\n");
+    // 如果进程正在运行,先停止它
+    if (wasRunning) {
+        AppendLog("[配置] 检测到进程运行中,正在停止...\r\n");
         StopProcess();
         Sleep(500); // 等待进程完全停止
-        SaveConfig(); // 保存新配置到默认配置文件
+    }
+    
+    MessageBox(hMainWindow, "配置已加载", "成功", MB_OK | MB_ICONINFORMATION);
+    AppendLog("[配置] 已加载配置文件\r\n");
+    
+    // 如果之前进程在运行,则自动重启
+    if (wasRunning) {
+        AppendLog("[配置] 正在使用新配置重启进程...\r\n");
+        Sleep(200); // 短暂延迟确保UI更新
         StartProcess();
     }
 }
