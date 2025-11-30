@@ -97,10 +97,10 @@ void ShowTrayIcon();
 void RemoveTrayIcon();
 void FetchSubscription();
 void ParseSubscriptionData(const char* data);
-void SaveNodeConfig(const char* nodeName);
+void SaveNodeConfig(int nodeIndex);
 void LoadNodeList();
 void SaveNodeList();
-void LoadNodeConfigByName(const char* nodeName, BOOL autoStart);
+void LoadNodeConfigByIndex(int nodeIndex, BOOL autoStart);
 
 int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine, int nCmdShow) {
     (void)hPrevInstance; (void)lpCmdLine;
@@ -327,17 +327,13 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam) 
                         // 单击节点，显示配置但不启动
                         int sel = SendMessage(hNodeList, LB_GETCURSEL, 0, 0);
                         if (sel != LB_ERR) {
-                            char nodeName[MAX_SMALL_LEN];
-                            SendMessage(hNodeList, LB_GETTEXT, sel, (LPARAM)nodeName);
-                            LoadNodeConfigByName(nodeName, FALSE);
+                            LoadNodeConfigByIndex(sel, FALSE);
                         }
                     } else if (HIWORD(wParam) == LBN_DBLCLK) {
                         // 双击节点，加载配置并启动
                         int sel = SendMessage(hNodeList, LB_GETCURSEL, 0, 0);
                         if (sel != LB_ERR) {
-                            char nodeName[MAX_SMALL_LEN];
-                            SendMessage(hNodeList, LB_GETTEXT, sel, (LPARAM)nodeName);
-                            LoadNodeConfigByName(nodeName, TRUE);
+                            LoadNodeConfigByIndex(sel, TRUE);
                         }
                     }
                     break;
@@ -405,8 +401,8 @@ void CreateControls(HWND hwnd) {
         margin + Scale(165), innerY, Scale(120), Scale(32), hwnd, (HMENU)ID_FETCH_SUB_BTN, NULL, NULL);
     SendMessage(hFetchSubBtn, WM_SETFONT, (WPARAM)hFontUI, TRUE);
     
-    HWND hNodeLabel = CreateWindow("STATIC", "节点列表(双击启用):", WS_VISIBLE | WS_CHILD | SS_LEFT, 
-        margin + Scale(15), innerY + Scale(40), Scale(140), Scale(20), hwnd, NULL, NULL, NULL);
+    HWND hNodeLabel = CreateWindow("STATIC", "节点列表(单击查看/双击启用):", WS_VISIBLE | WS_CHILD | SS_LEFT, 
+        margin + Scale(15), innerY + Scale(40), Scale(200), Scale(20), hwnd, NULL, NULL, NULL);
     SendMessage(hNodeLabel, WM_SETFONT, (WPARAM)hFontUI, TRUE);
     
     hNodeList = CreateWindow("LISTBOX", "", WS_VISIBLE | WS_CHILD | WS_BORDER | WS_VSCROLL | LBS_NOTIFY,
@@ -695,30 +691,22 @@ void LoadConfig() {
     fclose(f);
 }
 
-// 加载节点配置
-void LoadNodeConfigByName(const char* nodeName, BOOL autoStart) {
-    char safeName[240];
-    strncpy(safeName, nodeName, sizeof(safeName) - 1);
-    safeName[sizeof(safeName) - 1] = '\0';
-    
+// 加载节点配置（使用索引）
+void LoadNodeConfigByIndex(int nodeIndex, BOOL autoStart) {
     char fileName[MAX_PATH];
-    snprintf(fileName, sizeof(fileName), "nodes/%s.ini", safeName);
+    snprintf(fileName, sizeof(fileName), "nodes/node_%d.ini", nodeIndex);
     
     FILE* f = fopen(fileName, "r");
     if (!f) {
-        AppendLog("[节点] 加载节点配置失败\r\n");
+        char logMsg[512];
+        snprintf(logMsg, sizeof(logMsg), "[节点] 配置文件不存在: %s\r\n", fileName);
+        AppendLog(logMsg);
         return;
     }
     
     char line[MAX_URL_LEN];
     while (fgets(line, sizeof(line), f)) {
-        // 移除 BOM 标记
-        char* lineStart = line;
-        if ((unsigned char)line[0] == 0xEF && (unsigned char)line[1] == 0xBB && (unsigned char)line[2] == 0xBF) {
-            lineStart += 3;
-        }
-        
-        char* val = strchr(lineStart, '=');
+        char* val = strchr(line, '=');
         if (!val) continue;
         *val++ = 0;
         
@@ -728,13 +716,13 @@ void LoadNodeConfigByName(const char* nodeName, BOOL autoStart) {
             val[--valLen] = 0;
         }
 
-        if (!strcmp(lineStart, "configName")) strcpy(currentConfig.configName, val);
-        else if (!strcmp(lineStart, "server")) strcpy(currentConfig.server, val);
-        else if (!strcmp(lineStart, "listen")) strcpy(currentConfig.listen, val);
-        else if (!strcmp(lineStart, "token")) strcpy(currentConfig.token, val);
-        else if (!strcmp(lineStart, "ip")) strcpy(currentConfig.ip, val);
-        else if (!strcmp(lineStart, "dns")) strcpy(currentConfig.dns, val);
-        else if (!strcmp(lineStart, "ech")) strcpy(currentConfig.ech, val);
+        if (!strcmp(line, "configName")) strcpy(currentConfig.configName, val);
+        else if (!strcmp(line, "server")) strcpy(currentConfig.server, val);
+        else if (!strcmp(line, "listen")) strcpy(currentConfig.listen, val);
+        else if (!strcmp(line, "token")) strcpy(currentConfig.token, val);
+        else if (!strcmp(line, "ip")) strcpy(currentConfig.ip, val);
+        else if (!strcmp(line, "dns")) strcpy(currentConfig.dns, val);
+        else if (!strcmp(line, "ech")) strcpy(currentConfig.ech, val);
     }
     fclose(f);
     
@@ -743,22 +731,22 @@ void LoadNodeConfigByName(const char* nodeName, BOOL autoStart) {
     if (autoStart) {
         if (isProcessRunning) {
             char logMsg[512];
-            snprintf(logMsg, sizeof(logMsg), "[节点] 切换到: %s\r\n", safeName);
+            snprintf(logMsg, sizeof(logMsg), "[节点] 正在切换到: %s\r\n", currentConfig.configName);
             AppendLog(logMsg);
-            AppendLog("[节点] 正在停止当前进程...\r\n");
+            AppendLog("[节点] 停止当前进程...\r\n");
             StopProcess();
             Sleep(500);
-            AppendLog("[节点] 正在启动新节点...\r\n");
+            AppendLog("[节点] 启动新节点...\r\n");
             StartProcess();
         } else {
             char logMsg[512];
-            snprintf(logMsg, sizeof(logMsg), "[节点] 已加载并启动节点: %s\r\n", safeName);
+            snprintf(logMsg, sizeof(logMsg), "[节点] 启动节点: %s\r\n", currentConfig.configName);
             AppendLog(logMsg);
             StartProcess();
         }
     } else {
         char logMsg[512];
-        snprintf(logMsg, sizeof(logMsg), "[节点] 已加载节点配置: %s\r\n", safeName);
+        snprintf(logMsg, sizeof(logMsg), "[节点] 查看配置: %s\r\n", currentConfig.configName);
         AppendLog(logMsg);
     }
 }
@@ -767,9 +755,6 @@ void LoadNodeConfigByName(const char* nodeName, BOOL autoStart) {
 void SaveNodeList() {
     FILE* f = fopen("nodes/nodelist.txt", "w");
     if (!f) return;
-    
-    // 写入 UTF-8 BOM
-    fprintf(f, "\xEF\xBB\xBF");
     
     int count = SendMessage(hNodeList, LB_GETCOUNT, 0, 0);
     for (int i = 0; i < count; i++) {
@@ -789,20 +774,14 @@ void LoadNodeList() {
     
     char line[MAX_SMALL_LEN];
     while (fgets(line, sizeof(line), f)) {
-        // 移除 BOM 标记
-        char* lineStart = line;
-        if ((unsigned char)line[0] == 0xEF && (unsigned char)line[1] == 0xBB && (unsigned char)line[2] == 0xBF) {
-            lineStart += 3;
-        }
-        
         // 移除换行符和回车符
-        size_t len = strlen(lineStart);
-        while (len > 0 && (lineStart[len-1] == '\n' || lineStart[len-1] == '\r')) {
-            lineStart[--len] = 0;
+        size_t len = strlen(line);
+        while (len > 0 && (line[len-1] == '\n' || line[len-1] == '\r')) {
+            line[--len] = 0;
         }
         
         if (len > 0) {
-            SendMessage(hNodeList, LB_ADDSTRING, 0, (LPARAM)lineStart);
+            SendMessage(hNodeList, LB_ADDSTRING, 0, (LPARAM)line);
         }
     }
     fclose(f);
@@ -815,24 +794,17 @@ void LoadNodeList() {
     }
 }
 
-void SaveNodeConfig(const char* nodeName) {
+void SaveNodeConfig(int nodeIndex) {
     CreateDirectory("nodes", NULL);
     
     char fileName[MAX_PATH];
-    char safeName[240];
-    strncpy(safeName, nodeName, sizeof(safeName) - 1);
-    safeName[sizeof(safeName) - 1] = '\0';
+    snprintf(fileName, sizeof(fileName), "nodes/node_%d.ini", nodeIndex);
     
-    snprintf(fileName, sizeof(fileName), "nodes/%s.ini", safeName);
-    
-    FILE* f = fopen(fileName, "wb");  // 使用二进制模式写入
+    FILE* f = fopen(fileName, "w");
     if (!f) return;
     
-    // 写入 UTF-8 BOM
-    fprintf(f, "\xEF\xBB\xBF");
-    
     fprintf(f, "[ECHTunnel]\r\nconfigName=%s\r\nserver=%s\r\nlisten=%s\r\ntoken=%s\r\nip=%s\r\ndns=%s\r\nech=%s\r\n",
-        safeName, currentConfig.server, currentConfig.listen, currentConfig.token, 
+        currentConfig.configName, currentConfig.server, currentConfig.listen, currentConfig.token, 
         currentConfig.ip, currentConfig.dns, currentConfig.ech);
     fclose(f);
 }
@@ -1140,7 +1112,7 @@ void ParseSubscriptionData(const char* data) {
                     strcpy(currentConfig.ech, ech);
                 }
                 
-                SaveNodeConfig(nodeName);
+                SaveNodeConfig(nodeCount);  // 使用索引保存
                 SendMessage(hNodeList, LB_ADDSTRING, 0, (LPARAM)nodeName);
                 nodeCount++;
             }
@@ -1153,7 +1125,7 @@ void ParseSubscriptionData(const char* data) {
     char logMsg[512];
     if (filteredCount > 0) {
         snprintf(logMsg, sizeof(logMsg), 
-            "[订阅] 成功解析 %d 个 ech:// 节点，已过滤 %d 个其他协议节点\r\n", 
+            "[订阅] 成功解析 %d 个 ech:// 节点，过滤 %d 个其他协议节点\r\n", 
             nodeCount, filteredCount);
     } else {
         snprintf(logMsg, sizeof(logMsg), "[订阅] 成功解析 %d 个节点\r\n", nodeCount);
@@ -1161,7 +1133,9 @@ void ParseSubscriptionData(const char* data) {
     AppendLog(logMsg);
     
     if (nodeCount > 0) {
-        MessageBox(hMainWindow, "订阅获取成功", "成功", MB_OK | MB_ICONINFORMATION);
+        char msg[256];
+        snprintf(msg, sizeof(msg), "成功获取 %d 个节点", nodeCount);
+        MessageBox(hMainWindow, msg, "订阅成功", MB_OK | MB_ICONINFORMATION);
         SaveNodeList();  // 保存节点列表
     } else if (filteredCount > 0) {
         snprintf(logMsg, sizeof(logMsg), 
