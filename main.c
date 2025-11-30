@@ -652,7 +652,6 @@ void LoadConfig() {
 void SaveConfigToFile() {
     char newConfigName[MAX_SMALL_LEN] = "";
     
-    // 创建对话框让用户输入配置名称
     HWND hDialog = CreateWindowEx(
         WS_EX_DLGMODALFRAME | WS_EX_TOPMOST,
         "STATIC", "输入配置名称",
@@ -666,7 +665,6 @@ void SaveConfigToFile() {
         return;
     }
     
-    // 居中显示
     RECT rcParent, rcDialog;
     GetWindowRect(hMainWindow, &rcParent);
     GetWindowRect(hDialog, &rcDialog);
@@ -674,14 +672,12 @@ void SaveConfigToFile() {
     int y = rcParent.top + (rcParent.bottom - rcParent.top - (rcDialog.bottom - rcDialog.top)) / 2;
     SetWindowPos(hDialog, NULL, x, y, 0, 0, SWP_NOSIZE | SWP_NOZORDER);
     
-    // 创建提示标签
     HWND hLabel = CreateWindow("STATIC", "请输入配置名称:",
         WS_VISIBLE | WS_CHILD,
         Scale(20), Scale(20), Scale(300), Scale(20),
         hDialog, NULL, NULL, NULL);
     SendMessage(hLabel, WM_SETFONT, (WPARAM)hFontUI, TRUE);
     
-    // 创建输入框
     HWND hEdit = CreateWindow("EDIT", currentConfig.configName,
         WS_VISIBLE | WS_CHILD | WS_BORDER | ES_AUTOHSCROLL,
         Scale(20), Scale(50), Scale(360), Scale(25),
@@ -689,14 +685,12 @@ void SaveConfigToFile() {
     SendMessage(hEdit, WM_SETFONT, (WPARAM)hFontUI, TRUE);
     SendMessage(hEdit, EM_SETLIMITTEXT, MAX_SMALL_LEN - 1, 0);
     
-    // 创建确定按钮
     HWND hOkBtn = CreateWindow("BUTTON", "确定",
         WS_VISIBLE | WS_CHILD | BS_DEFPUSHBUTTON,
         Scale(120), Scale(85), Scale(80), Scale(30),
         hDialog, (HMENU)IDOK, NULL, NULL);
     SendMessage(hOkBtn, WM_SETFONT, (WPARAM)hFontUI, TRUE);
     
-    // 创建取消按钮
     HWND hCancelBtn = CreateWindow("BUTTON", "取消",
         WS_VISIBLE | WS_CHILD | BS_PUSHBUTTON,
         Scale(220), Scale(85), Scale(80), Scale(30),
@@ -707,42 +701,53 @@ void SaveConfigToFile() {
     SetFocus(hEdit);
     SendMessage(hEdit, EM_SETSEL, 0, -1);
     
-    // 消息循环
+    // 修复：改进消息循环，正确处理对话框消息
     MSG msg;
     BOOL dialogResult = FALSE;
-    while (GetMessage(&msg, NULL, 0, 0)) {
-        if (msg.message == WM_COMMAND) {
-            if (LOWORD(msg.wParam) == IDOK) {
-                GetWindowText(hEdit, newConfigName, sizeof(newConfigName));
-                
-                // 去除首尾空格
-                char* start = newConfigName;
-                while (*start == ' ') start++;
-                char* end = start + strlen(start) - 1;
-                while (end > start && *end == ' ') end--;
-                *(end + 1) = '\0';
-                memmove(newConfigName, start, strlen(start) + 1);
-                
-                if (strlen(newConfigName) == 0) {
-                    MessageBox(hDialog, "配置名称不能为空", "提示", MB_OK | MB_ICONWARNING);
-                    SetFocus(hEdit);
+    BOOL dialogRunning = TRUE;
+    
+    while (dialogRunning && GetMessage(&msg, NULL, 0, 0)) {
+        // 检查是否是对话框或其子控件的消息
+        if (msg.hwnd == hDialog || IsChild(hDialog, msg.hwnd)) {
+            if (msg.message == WM_COMMAND) {
+                if (LOWORD(msg.wParam) == IDOK) {
+                    GetWindowText(hEdit, newConfigName, sizeof(newConfigName));
+                    
+                    // 去除首尾空格
+                    char* start = newConfigName;
+                    while (*start == ' ') start++;
+                    char* end = start + strlen(start) - 1;
+                    while (end > start && *end == ' ') end--;
+                    *(end + 1) = '\0';
+                    memmove(newConfigName, start, strlen(start) + 1);
+                    
+                    if (strlen(newConfigName) == 0) {
+                        MessageBox(hDialog, "配置名称不能为空", "提示", MB_OK | MB_ICONWARNING);
+                        SetFocus(hEdit);
+                        continue;
+                    }
+                    
+                    dialogResult = TRUE;
+                    dialogRunning = FALSE;
+                    DestroyWindow(hDialog);
+                    continue;
+                } else if (LOWORD(msg.wParam) == IDCANCEL) {
+                    dialogRunning = FALSE;
+                    DestroyWindow(hDialog);
                     continue;
                 }
-                
-                dialogResult = TRUE;
+            } else if (msg.message == WM_CLOSE) {
+                dialogRunning = FALSE;
                 DestroyWindow(hDialog);
-                break;
-            } else if (LOWORD(msg.wParam) == IDCANCEL) {
-                DestroyWindow(hDialog);
-                break;
+                continue;
             }
-        } else if (msg.message == WM_CLOSE || msg.message == WM_DESTROY) {
-            DestroyWindow(hDialog);
-            break;
         }
         
-        TranslateMessage(&msg);
-        DispatchMessage(&msg);
+        // 处理Tab键切换焦点
+        if (!IsDialogMessage(hDialog, &msg)) {
+            TranslateMessage(&msg);
+            DispatchMessage(&msg);
+        }
     }
     
     if (!dialogResult) {
@@ -764,9 +769,9 @@ void SaveConfigToFile() {
         return;
     }
     
-    fprintf(f, "[ECHTunnel]\nconfigName=%s\nserver=%s\nlisten=%s\ntoken=%s\nip=%s\ndns=%s\nech=%s\n",
+    fprintf(f, "[ECHTunnel]\nconfigName=%s\nserver=%s\nlisten=%s\ntoken=%s\nip=%s\ndns=%s\nech=%s\nconnections=%d\n",
         currentConfig.configName, currentConfig.server, currentConfig.listen, currentConfig.token, 
-        currentConfig.ip, currentConfig.dns, currentConfig.ech);
+        currentConfig.ip, currentConfig.dns, currentConfig.ech, currentConfig.connections);
     fclose(f);
     
     char msg_text[512];
@@ -777,7 +782,6 @@ void SaveConfigToFile() {
     snprintf(logMsg, sizeof(logMsg), "[配置] 已保存配置: %s\r\n", fileName);
     AppendLog(logMsg);
 }
-
 void LoadConfigFromFile() {
     OPENFILENAME ofn;
     char fileName[MAX_PATH] = "";
