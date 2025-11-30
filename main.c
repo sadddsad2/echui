@@ -843,6 +843,97 @@ void LoadConfigFromFile() {
     }
 }
 
+// Base64 解码函数
+char* base64_decode(const char* input, size_t* out_len) {
+    static const unsigned char base64_table[256] = {
+        64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64,
+        64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64,
+        64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 62, 64, 64, 64, 63,
+        52, 53, 54, 55, 56, 57, 58, 59, 60, 61, 64, 64, 64, 64, 64, 64,
+        64,  0,  1,  2,  3,  4,  5,  6,  7,  8,  9, 10, 11, 12, 13, 14,
+        15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 64, 64, 64, 64, 64,
+        64, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40,
+        41, 42, 43, 44, 45, 46, 47, 48, 49, 50, 51, 64, 64, 64, 64, 64,
+        64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64,
+        64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64,
+        64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64,
+        64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64,
+        64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64,
+        64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64,
+        64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64,
+        64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64
+    };
+    
+    size_t in_len = strlen(input);
+    if (in_len == 0) return NULL;
+    
+    // 计算输出长度
+    size_t padding = 0;
+    if (input[in_len - 1] == '=') padding++;
+    if (in_len > 1 && input[in_len - 2] == '=') padding++;
+    
+    size_t output_len = (in_len / 4) * 3 - padding;
+    char* output = (char*)malloc(output_len + 1);
+    if (!output) return NULL;
+    
+    size_t j = 0;
+    unsigned char block[4];
+    size_t block_pos = 0;
+    
+    for (size_t i = 0; i < in_len; i++) {
+        unsigned char c = (unsigned char)input[i];
+        if (c == '=' || base64_table[c] == 64) {
+            if (c != '=' && c != '\r' && c != '\n' && c != ' ') {
+                free(output);
+                return NULL;
+            }
+            continue;
+        }
+        
+        block[block_pos++] = base64_table[c];
+        
+        if (block_pos == 4) {
+            output[j++] = (block[0] << 2) | (block[1] >> 4);
+            if (j < output_len) output[j++] = (block[1] << 4) | (block[2] >> 2);
+            if (j < output_len) output[j++] = (block[2] << 6) | block[3];
+            block_pos = 0;
+        }
+    }
+    
+    output[output_len] = '\0';
+    if (out_len) *out_len = output_len;
+    return output;
+}
+
+// 检查字符串是否为 Base64 编码
+BOOL is_base64_encoded(const char* data) {
+    if (!data || strlen(data) == 0) return FALSE;
+    
+    // 检查是否包含换行符或明显的文本内容（如 ech://）
+    if (strstr(data, "ech://") || strstr(data, "ECH://") || 
+        strstr(data, "\r\n") || strstr(data, "\n")) {
+        return FALSE;
+    }
+    
+    size_t len = strlen(data);
+    size_t valid_chars = 0;
+    
+    // Base64 字符集
+    for (size_t i = 0; i < len; i++) {
+        char c = data[i];
+        if ((c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') || 
+            (c >= '0' && c <= '9') || c == '+' || c == '/' || c == '=') {
+            valid_chars++;
+        } else if (c != '\r' && c != '\n' && c != ' ') {
+            // 包含非Base64字符
+            return FALSE;
+        }
+    }
+    
+    // 如果大部分字符是Base64字符，认为是Base64编码
+    return (valid_chars * 100 / len) > 90;
+}
+
 void ParseSubscriptionData(const char* data) {
     if (!data || strlen(data) == 0) {
         AppendLog("[订阅] 订阅数据为空\r\n");
@@ -851,8 +942,21 @@ void ParseSubscriptionData(const char* data) {
     
     SendMessage(hNodeList, LB_RESETCONTENT, 0, 0);
     
-    char* dataCopy = strdup(data);
-    if (!dataCopy) return;
+    // 检查是否需要Base64解码
+    char* dataCopy = NULL;
+    if (is_base64_encoded(data)) {
+        AppendLog("[订阅] 检测到Base64编码，正在解码...\r\n");
+        size_t decoded_len = 0;
+        dataCopy = base64_decode(data, &decoded_len);
+        if (!dataCopy) {
+            AppendLog("[订阅] Base64解码失败\r\n");
+            return;
+        }
+        AppendLog("[订阅] Base64解码成功\r\n");
+    } else {
+        dataCopy = strdup(data);
+        if (!dataCopy) return;
+    }
     
     char* line = strtok(dataCopy, "\r\n");
     int nodeCount = 0;
