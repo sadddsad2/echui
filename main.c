@@ -317,46 +317,49 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam) 
                 case ID_FETCH_SUB_BTN:
                     FetchSubscription();
                     break;
- case ID_NODE_LIST:
-    if (HIWORD(wParam) == LBN_DBLCLK) {
-        int sel = SendMessage(hNodeList, LB_GETCURSEL, 0, 0);
-        if (sel != LB_ERR) {
-            char nodeName[MAX_SMALL_LEN];
-            SendMessage(hNodeList, LB_GETTEXT, sel, (LPARAM)nodeName);
-            
-            // 限制节点名称长度
-            char safeName[240];
-            strncpy(safeName, nodeName, sizeof(safeName) - 1);
-            safeName[sizeof(safeName) - 1] = '\0';
-            
-            // 加载对应的配置文件
-            char fileName[MAX_PATH];
-            snprintf(fileName, sizeof(fileName), "nodes/%s.ini", safeName);
-            
-            FILE* f = fopen(fileName, "r");
-            if (f) {
-                char line[MAX_URL_LEN];
-                while (fgets(line, sizeof(line), f)) {
-                    char* val = strchr(line, '=');
-                    if (!val) continue;
-                    *val++ = 0;
-                    if (val[strlen(val)-1] == '\n') val[strlen(val)-1] = 0;
 
-                    if (!strcmp(line, "configName")) strcpy(currentConfig.configName, val);
-                    else if (!strcmp(line, "server")) strcpy(currentConfig.server, val);
-                    else if (!strcmp(line, "listen")) strcpy(currentConfig.listen, val);
-                    else if (!strcmp(line, "token")) strcpy(currentConfig.token, val);
-                    else if (!strcmp(line, "ip")) strcpy(currentConfig.ip, val);
-                    else if (!strcmp(line, "dns")) strcpy(currentConfig.dns, val);
-                    else if (!strcmp(line, "ech")) strcpy(currentConfig.ech, val);
-                }
-                fclose(f);
-                SetControlValues();
-                AppendLog("[订阅] 已加载节点配置\r\n");
+                case ID_NODE_LIST:
+                    if (HIWORD(wParam) == LBN_DBLCLK) {
+                        int sel = SendMessage(hNodeList, LB_GETCURSEL, 0, 0);
+                        if (sel != LB_ERR) {
+                            char nodeName[MAX_SMALL_LEN];
+                            SendMessage(hNodeList, LB_GETTEXT, sel, (LPARAM)nodeName);
+                            
+                            // 限制节点名称长度
+                            char safeName[240];
+                            strncpy(safeName, nodeName, sizeof(safeName) - 1);
+                            safeName[sizeof(safeName) - 1] = '\0';
+                            
+                            // 加载对应的配置文件
+                            char fileName[MAX_PATH];
+                            snprintf(fileName, sizeof(fileName), "nodes/%s.ini", safeName);
+                            
+                            FILE* f = fopen(fileName, "r");
+                            if (f) {
+                                char line[MAX_URL_LEN];
+                                while (fgets(line, sizeof(line), f)) {
+                                    char* val = strchr(line, '=');
+                                    if (!val) continue;
+                                    *val++ = 0;
+                                    if (val[strlen(val)-1] == '\n') val[strlen(val)-1] = 0;
+
+                                    if (!strcmp(line, "configName")) strcpy(currentConfig.configName, val);
+                                    else if (!strcmp(line, "server")) strcpy(currentConfig.server, val);
+                                    else if (!strcmp(line, "listen")) strcpy(currentConfig.listen, val);
+                                    else if (!strcmp(line, "token")) strcpy(currentConfig.token, val);
+                                    else if (!strcmp(line, "ip")) strcpy(currentConfig.ip, val);
+                                    else if (!strcmp(line, "dns")) strcpy(currentConfig.dns, val);
+                                    else if (!strcmp(line, "ech")) strcpy(currentConfig.ech, val);
+                                }
+                                fclose(f);
+                                SetControlValues();
+                                AppendLog("[订阅] 已加载节点配置\r\n");
+                            }
+                        }
+                    }
+                    break;
             }
-        }
-    }
-    break;
+            break;
 
         case WM_CLOSE:
             if (isProcessRunning) StopProcess();
@@ -379,7 +382,6 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam) 
     }
     return 0;
 }
-
 void CreateLabelAndEdit(HWND parent, const char* labelText, int x, int y, int w, int h, int editId, HWND* outEdit, BOOL numberOnly) {
     HWND hStatic = CreateWindow("STATIC", labelText, WS_VISIBLE | WS_CHILD | SS_LEFT, 
         x, y + Scale(3), Scale(140), Scale(20), parent, NULL, NULL, NULL);
