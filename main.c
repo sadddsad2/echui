@@ -71,7 +71,7 @@ typedef struct {
 } Config;
 
 Config currentConfig = {
-    "默认配置", "223.5.5.5/dns-query", "cloudflare-ech.com", "example.com:443", "", "127.0.0.1:30000", ""
+    "默认配置", "dns.alidns.com/dns-query", "cloudflare-ech.com", "example.com:443", "", "127.0.0.1:30000", ""
 };
 
 LRESULT CALLBACK WindowProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam);
@@ -396,7 +396,7 @@ void CreateControls(HWND hwnd) {
     CreateLabelAndEdit(hwnd, "ECH域名:", margin + Scale(15), innerY, groupW - Scale(30), editH, ID_ECH_EDIT, &hEchEdit, FALSE);
     innerY += lineHeight + lineGap;
 
-    CreateLabelAndEdit(hwnd, "DNS服务器(IP/域名):", margin + Scale(15), innerY, groupW - Scale(30), editH, ID_DNS_EDIT, &hDnsEdit, FALSE);
+    CreateLabelAndEdit(hwnd, "DNS服务器(仅域名):", margin + Scale(15), innerY, groupW - Scale(30), editH, ID_DNS_EDIT, &hDnsEdit, FALSE);
 
     curY += group2H + Scale(15);
 
