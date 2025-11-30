@@ -325,12 +325,10 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam) 
                             char nodeName[MAX_SMALL_LEN];
                             SendMessage(hNodeList, LB_GETTEXT, sel, (LPARAM)nodeName);
                             
-                            // 限制节点名称长度
                             char safeName[240];
                             strncpy(safeName, nodeName, sizeof(safeName) - 1);
                             safeName[sizeof(safeName) - 1] = '\0';
                             
-                            // 加载对应的配置文件
                             char fileName[MAX_PATH];
                             snprintf(fileName, sizeof(fileName), "nodes/%s.ini", safeName);
                             
@@ -353,7 +351,23 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam) 
                                 }
                                 fclose(f);
                                 SetControlValues();
-                                AppendLog("[订阅] 已加载节点配置\r\n");
+                                
+                                if (isProcessRunning) {
+                                    char logMsg[512];
+                                    snprintf(logMsg, sizeof(logMsg), "[节点] 切换到: %s\r\n", safeName);
+                                    AppendLog(logMsg);
+                                    AppendLog("[节点] 正在停止当前进程...\r\n");
+                                    StopProcess();
+                                    Sleep(500);
+                                    AppendLog("[节点] 正在启动新节点...\r\n");
+                                    StartProcess();
+                                } else {
+                                    char logMsg[512];
+                                    snprintf(logMsg, sizeof(logMsg), "[节点] 已加载节点: %s\r\n", safeName);
+                                    AppendLog(logMsg);
+                                }
+                            } else {
+                                AppendLog("[节点] 加载节点配置失败\r\n");
                             }
                         }
                     }
@@ -382,6 +396,7 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam) 
     }
     return 0;
 }
+
 void CreateLabelAndEdit(HWND parent, const char* labelText, int x, int y, int w, int h, int editId, HWND* outEdit, BOOL numberOnly) {
     HWND hStatic = CreateWindow("STATIC", labelText, WS_VISIBLE | WS_CHILD | SS_LEFT, 
         x, y + Scale(3), Scale(140), Scale(20), parent, NULL, NULL, NULL);
@@ -396,7 +411,6 @@ void CreateLabelAndEdit(HWND parent, const char* labelText, int x, int y, int w,
     SendMessage(*outEdit, EM_SETLIMITTEXT, (editId == ID_SERVER_EDIT || editId == ID_TOKEN_EDIT || editId == ID_SUBSCRIBE_URL_EDIT) ? MAX_URL_LEN : MAX_SMALL_LEN, 0);
 }
 
-// 修改 CreateControls 函数中的节点列表部分
 void CreateControls(HWND hwnd) {
     RECT rect;
     GetClientRect(hwnd, &rect);
@@ -408,7 +422,6 @@ void CreateControls(HWND hwnd) {
     int editH = Scale(26);
     int curY = margin;
 
-    // 订阅功能组 - 扩大高度以容纳更大的节点列表
     int groupSubH = Scale(230);
     HWND hGroupSub = CreateWindow("BUTTON", "订阅管理", WS_VISIBLE | WS_CHILD | BS_GROUPBOX,
         margin, curY, groupW, groupSubH, hwnd, NULL, NULL, NULL);
@@ -427,14 +440,12 @@ void CreateControls(HWND hwnd) {
         margin + Scale(15), innerY + Scale(40), Scale(140), Scale(20), hwnd, NULL, NULL, NULL);
     SendMessage(hNodeLabel, WM_SETFONT, (WPARAM)hFontUI, TRUE);
     
-    // 修改节点列表 - 增大高度，显示约10个节点
     hNodeList = CreateWindow("LISTBOX", "", WS_VISIBLE | WS_CHILD | WS_BORDER | WS_VSCROLL | LBS_NOTIFY,
         margin + Scale(165), innerY + Scale(37), groupW - Scale(180), Scale(140), hwnd, (HMENU)ID_NODE_LIST, NULL, NULL);
     SendMessage(hNodeList, WM_SETFONT, (WPARAM)hFontUI, TRUE);
 
     curY += groupSubH + Scale(15);
 
-    // 配置名称
     HWND hConfigLabel = CreateWindow("STATIC", "配置名称:", WS_VISIBLE | WS_CHILD | SS_LEFT, 
         margin, curY + Scale(3), Scale(80), Scale(20), hwnd, NULL, NULL, NULL);
     SendMessage(hConfigLabel, WM_SETFONT, (WPARAM)hFontUI, TRUE);
@@ -520,219 +531,6 @@ void CreateControls(HWND hwnd) {
     SendMessage(hLogEdit, EM_SETLIMITTEXT, 0, 0);
 }
 
-// 修改双击节点列表的处理逻辑
-// 在 WindowProc 的 WM_COMMAND 部分修改 ID_NODE_LIST 的处理
-case ID_NODE_LIST:
-    if (HIWORD(wParam) == LBN_DBLCLK) {
-        int sel = SendMessage(hNodeList, LB_GETCURSEL, 0, 0);
-        if (sel != LB_ERR) {
-            char nodeName[MAX_SMALL_LEN];
-            SendMessage(hNodeList, LB_GETTEXT, sel, (LPARAM)nodeName);
-            
-            // 限制节点名称长度
-            char safeName[240];
-            strncpy(safeName, nodeName, sizeof(safeName) - 1);
-            safeName[sizeof(safeName) - 1] = '\0';
-            
-            // 加载对应的配置文件
-            char fileName[MAX_PATH];
-            snprintf(fileName, sizeof(fileName), "nodes/%s.ini", safeName);
-            
-            FILE* f = fopen(fileName, "r");
-            if (f) {
-                char line[MAX_URL_LEN];
-                while (fgets(line, sizeof(line), f)) {
-                    char* val = strchr(line, '=');
-                    if (!val) continue;
-                    *val++ = 0;
-                    if (val[strlen(val)-1] == '\n') val[strlen(val)-1] = 0;
-
-                    if (!strcmp(line, "configName")) strcpy(currentConfig.configName, val);
-                    else if (!strcmp(line, "server")) strcpy(currentConfig.server, val);
-                    else if (!strcmp(line, "listen")) strcpy(currentConfig.listen, val);
-                    else if (!strcmp(line, "token")) strcpy(currentConfig.token, val);
-                    else if (!strcmp(line, "ip")) strcpy(currentConfig.ip, val);
-                    else if (!strcmp(line, "dns")) strcpy(currentConfig.dns, val);
-                    else if (!strcmp(line, "ech")) strcpy(currentConfig.ech, val);
-                }
-                fclose(f);
-                SetControlValues();
-                
-                // 如果进程正在运行，先停止再重启
-                if (isProcessRunning) {
-                    char logMsg[512];
-                    snprintf(logMsg, sizeof(logMsg), "[节点] 切换到: %s\r\n", safeName);
-                    AppendLog(logMsg);
-                    AppendLog("[节点] 正在停止当前进程...\r\n");
-                    StopProcess();
-                    Sleep(500);
-                    AppendLog("[节点] 正在启动新节点...\r\n");
-                    StartProcess();
-                } else {
-                    char logMsg[512];
-                    snprintf(logMsg, sizeof(logMsg), "[节点] 已加载节点: %s\r\n", safeName);
-                    AppendLog(logMsg);
-                }
-            } else {
-                AppendLog("[节点] 加载节点配置失败\r\n");
-            }
-        }
-    }
-    break;
-
-// ParseSubscriptionData 函数 - 只在列表中显示节点名称
-void ParseSubscriptionData(const char* data) {
-    if (!data || strlen(data) == 0) {
-        AppendLog("[订阅] 订阅数据为空\r\n");
-        return;
-    }
-    
-    SendMessage(hNodeList, LB_RESETCONTENT, 0, 0);
-    
-    char* dataCopy = strdup(data);
-    if (!dataCopy) return;
-    
-    char* line = strtok(dataCopy, "\r\n");
-    int nodeCount = 0;
-    int filteredCount = 0;
-    
-    while (line != NULL) {
-        // 跳过空行和注释
-        if (strlen(line) > 0 && line[0] != ';' && strncmp(line, "//", 2) != 0) {
-            // 检查是否以 ech:// 开头（忽略大小写）
-            if (strncmp(line, "ech://", 6) != 0 && strncmp(line, "ECH://", 6) != 0) {
-                filteredCount++;
-                line = strtok(NULL, "\r\n");
-                continue;
-            }
-            
-            char nodeName[MAX_SMALL_LEN] = {0};
-            char server[MAX_URL_LEN] = {0};
-            char token[MAX_URL_LEN] = {0};
-            char ip[MAX_SMALL_LEN] = {0};
-            char dns[MAX_SMALL_LEN] = {0};
-            char ech[MAX_SMALL_LEN] = {0};
-            
-            // 先提取节点名称（#后面的部分）
-            char* nameStart = strchr(line, '#');
-            if (nameStart) {
-                strncpy(nodeName, nameStart + 1, MAX_SMALL_LEN - 1);
-                nodeName[MAX_SMALL_LEN - 1] = '\0';
-                *nameStart = '\0';
-            }
-            
-            // 跳过 ech:// 前缀
-            char* p = line;
-            if (strncmp(p, "ech://", 6) == 0 || strncmp(p, "ECH://", 6) == 0) {
-                p += 6;
-            }
-            
-            // 解析各个字段
-            int partIndex = 0;
-            char* start = p;
-            
-            while (*p) {
-                if (*p == '|' || *(p + 1) == '\0') {
-                    size_t len = (*p == '|') ? (size_t)(p - start) : (size_t)(p - start + 1);
-                    
-                    if (partIndex == 0 && len > 0 && len < MAX_URL_LEN) {
-                        strncpy(server, start, len);
-                        server[len] = '\0';
-                    } else if (partIndex == 1 && len > 0 && len < MAX_URL_LEN) {
-                        strncpy(token, start, len);
-                        token[len] = '\0';
-                    } else if (partIndex == 2 && len > 0 && len < MAX_SMALL_LEN) {
-                        strncpy(ip, start, len);
-                        ip[len] = '\0';
-                    } else if (partIndex == 3 && len > 0 && len < MAX_SMALL_LEN) {
-                        strncpy(dns, start, len);
-                        dns[len] = '\0';
-                    } else if (partIndex == 4 && len > 0 && len < MAX_SMALL_LEN) {
-                        strncpy(ech, start, len);
-                        ech[len] = '\0';
-                    }
-                    
-                    if (*p == '|') {
-                        partIndex++;
-                        start = p + 1;
-                    }
-                }
-                p++;
-            }
-            
-            // 如果没有|分隔符，整个作为server
-            if (partIndex == 0 && strlen(server) == 0) {
-                strncpy(server, start, MAX_URL_LEN - 1);
-                server[MAX_URL_LEN - 1] = '\0';
-            }
-            
-            // 如果节点名称为空，使用服务地址作为名称
-            if (strlen(nodeName) == 0 && strlen(server) > 0) {
-                char* colonPos = strchr(server, ':');
-                if (colonPos) {
-                    size_t hostLen = (size_t)(colonPos - server);
-                    if (hostLen > 0 && hostLen < MAX_SMALL_LEN) {
-                        strncpy(nodeName, server, hostLen);
-                        nodeName[hostLen] = '\0';
-                    }
-                } else {
-                    strncpy(nodeName, server, MAX_SMALL_LEN - 1);
-                    nodeName[MAX_SMALL_LEN - 1] = '\0';
-                }
-            }
-            
-            // 保存节点配置
-            if (strlen(nodeName) > 0 && strlen(server) > 0) {
-                strcpy(currentConfig.configName, nodeName);
-                strcpy(currentConfig.server, server);
-                strcpy(currentConfig.token, token);
-                strcpy(currentConfig.ip, ip);
-                
-                if (strlen(dns) == 0) {
-                    strcpy(currentConfig.dns, "dns.alidns.com/dns-query");
-                } else {
-                    strcpy(currentConfig.dns, dns);
-                }
-                
-                if (strlen(ech) == 0) {
-                    strcpy(currentConfig.ech, "cloudflare-ech.com");
-                } else {
-                    strcpy(currentConfig.ech, ech);
-                }
-                
-                SaveNodeConfig(nodeName);
-                
-                // 只添加节点名称到列表，不显示完整配置
-                SendMessage(hNodeList, LB_ADDSTRING, 0, (LPARAM)nodeName);
-                nodeCount++;
-            }
-        }
-        line = strtok(NULL, "\r\n");
-    }
-    
-    free(dataCopy);
-    
-    char logMsg[512];
-    if (filteredCount > 0) {
-        snprintf(logMsg, sizeof(logMsg), 
-            "[订阅] 成功解析 %d 个 ech:// 节点，已过滤 %d 个其他协议节点\r\n", 
-            nodeCount, filteredCount);
-    } else {
-        snprintf(logMsg, sizeof(logMsg), "[订阅] 成功解析 %d 个节点\r\n", nodeCount);
-    }
-    AppendLog(logMsg);
-    
-    if (nodeCount > 0) {
-        MessageBox(hMainWindow, "订阅获取成功", "成功", MB_OK | MB_ICONINFORMATION);
-    } else if (filteredCount > 0) {
-        snprintf(logMsg, sizeof(logMsg), 
-            "订阅中未找到 ech:// 协议节点\n已过滤 %d 个其他协议节点", 
-            filteredCount);
-        MessageBox(hMainWindow, logMsg, "提示", MB_OK | MB_ICONWARNING);
-    } else {
-        MessageBox(hMainWindow, "未找到有效节点", "提示", MB_OK | MB_ICONWARNING);
-    }
-}
 void GetControlValues() {
     char buf[MAX_URL_LEN];
     GetWindowText(hConfigNameEdit, currentConfig.configName, sizeof(currentConfig.configName));
@@ -830,6 +628,7 @@ void StartProcess() {
         AppendLog("[错误] 启动失败,请检查配置。\r\n");
     }
 }
+
 void StopProcess() {
     isProcessRunning = FALSE;
 
@@ -936,12 +735,12 @@ void LoadConfig() {
     }
     fclose(f);
 }
+
 void SaveNodeConfig(const char* nodeName) {
     CreateDirectory("nodes", NULL);
     
     char fileName[MAX_PATH];
-    // 限制节点名称长度以防止缓冲区溢出
-    char safeName[240]; // 留出足够空间给 "nodes/" 和 ".ini"
+    char safeName[240];
     strncpy(safeName, nodeName, sizeof(safeName) - 1);
     safeName[sizeof(safeName) - 1] = '\0';
     
@@ -955,13 +754,13 @@ void SaveNodeConfig(const char* nodeName) {
         currentConfig.ip, currentConfig.dns, currentConfig.ech);
     fclose(f);
 }
+
 void SaveConfigToFile() {
     if (strlen(currentConfig.configName) == 0) {
         MessageBox(hMainWindow, "请输入配置名称", "提示", MB_OK | MB_ICONWARNING);
         return;
     }
     
-    // 限制配置名称长度
     char safeName[240];
     strncpy(safeName, currentConfig.configName, sizeof(safeName) - 1);
     safeName[sizeof(safeName) - 1] = '\0';
@@ -985,6 +784,7 @@ void SaveConfigToFile() {
     MessageBox(hMainWindow, msg, "成功", MB_OK | MB_ICONINFORMATION);
     AppendLog("[配置] 已保存配置文件\r\n");
 }
+
 void LoadConfigFromFile() {
     OPENFILENAME ofn;
     char fileName[MAX_PATH] = "";
@@ -1042,6 +842,7 @@ void LoadConfigFromFile() {
         StartProcess();
     }
 }
+
 void ParseSubscriptionData(const char* data) {
     if (!data || strlen(data) == 0) {
         AppendLog("[订阅] 订阅数据为空\r\n");
@@ -1055,20 +856,16 @@ void ParseSubscriptionData(const char* data) {
     
     char* line = strtok(dataCopy, "\r\n");
     int nodeCount = 0;
-    int filteredCount = 0; // 统计被过滤的节点数
+    int filteredCount = 0;
     
     while (line != NULL) {
-        // 跳过空行和注释
         if (strlen(line) > 0 && line[0] != ';' && strncmp(line, "//", 2) != 0) {
-            // 检查是否以 ech:// 开头（忽略大小写）
             if (strncmp(line, "ech://", 6) != 0 && strncmp(line, "ECH://", 6) != 0) {
-                // 不是 ech:// 开头，跳过此节点
                 filteredCount++;
                 line = strtok(NULL, "\r\n");
                 continue;
             }
             
-            // 格式: ech://服务地址|token|优选IP|dns|ech域名#节点名称
             char nodeName[MAX_SMALL_LEN] = {0};
             char server[MAX_URL_LEN] = {0};
             char token[MAX_URL_LEN] = {0};
@@ -1076,7 +873,6 @@ void ParseSubscriptionData(const char* data) {
             char dns[MAX_SMALL_LEN] = {0};
             char ech[MAX_SMALL_LEN] = {0};
             
-            // 先提取节点名称（#后面的部分）
             char* nameStart = strchr(line, '#');
             if (nameStart) {
                 strncpy(nodeName, nameStart + 1, MAX_SMALL_LEN - 1);
@@ -1084,13 +880,11 @@ void ParseSubscriptionData(const char* data) {
                 *nameStart = '\0';
             }
             
-            // 跳过 ech:// 前缀
             char* p = line;
             if (strncmp(p, "ech://", 6) == 0 || strncmp(p, "ECH://", 6) == 0) {
                 p += 6;
             }
             
-            // 解析各个字段
             int partIndex = 0;
             char* start = p;
             
@@ -1123,13 +917,11 @@ void ParseSubscriptionData(const char* data) {
                 p++;
             }
             
-            // 如果没有|分隔符，整个作为server
             if (partIndex == 0 && strlen(server) == 0) {
                 strncpy(server, start, MAX_URL_LEN - 1);
                 server[MAX_URL_LEN - 1] = '\0';
             }
             
-            // 如果节点名称为空，使用服务地址作为名称
             if (strlen(nodeName) == 0 && strlen(server) > 0) {
                 char* colonPos = strchr(server, ':');
                 if (colonPos) {
@@ -1144,7 +936,6 @@ void ParseSubscriptionData(const char* data) {
                 }
             }
             
-            // 保存节点配置
             if (strlen(nodeName) > 0 && strlen(server) > 0) {
                 strcpy(currentConfig.configName, nodeName);
                 strcpy(currentConfig.server, server);
@@ -1194,6 +985,7 @@ void ParseSubscriptionData(const char* data) {
         MessageBox(hMainWindow, "未找到有效节点", "提示", MB_OK | MB_ICONWARNING);
     }
 }
+
 void FetchSubscription() {
     char url[MAX_URL_LEN];
     GetWindowText(hSubscribeUrlEdit, url, sizeof(url));
@@ -1220,7 +1012,7 @@ void FetchSubscription() {
         return;
     }
     
-    char* buffer = (char*)malloc(1024 * 1024); // 1MB buffer
+    char* buffer = (char*)malloc(1024 * 1024);
     if (!buffer) {
         InternetCloseHandle(hConnect);
         InternetCloseHandle(hInternet);
