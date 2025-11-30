@@ -101,6 +101,12 @@ void SaveNodeConfig(int nodeIndex);
 void LoadNodeList();
 void SaveNodeList();
 void LoadNodeConfigByIndex(int nodeIndex, BOOL autoStart);
+char* UTF8ToGBK(const char* utf8Str);
+char* GBKToUTF8(const char* gbkStr);
+char* URLDecode(const char* str);
+BOOL IsUTF8File(const char* fileName);
+char* base64_decode(const char* input, size_t* out_len);
+BOOL is_base64_encoded(const char* data);
 
 int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine, int nCmdShow) {
     (void)hPrevInstance; (void)lpCmdLine;
@@ -216,7 +222,7 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam) 
             CreateControls(hwnd);
             LoadConfig();
             SetControlValues();
-            LoadNodeList();  // 启动时加载节点列表
+            LoadNodeList();
             break;
 
         case WM_SYSCOMMAND:
@@ -324,13 +330,11 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam) 
 
                 case ID_NODE_LIST:
                     if (HIWORD(wParam) == LBN_SELCHANGE) {
-                        // 单击节点，显示配置但不启动
                         int sel = SendMessage(hNodeList, LB_GETCURSEL, 0, 0);
                         if (sel != LB_ERR) {
                             LoadNodeConfigByIndex(sel, FALSE);
                         }
                     } else if (HIWORD(wParam) == LBN_DBLCLK) {
-                        // 双击节点，加载配置并启动
                         int sel = SendMessage(hNodeList, LB_GETCURSEL, 0, 0);
                         if (sel != LB_ERR) {
                             LoadNodeConfigByIndex(sel, TRUE);
@@ -495,6 +499,7 @@ void CreateControls(HWND hwnd) {
     SendMessage(hLogEdit, WM_SETFONT, (WPARAM)hFontLog, TRUE);
     SendMessage(hLogEdit, EM_SETLIMITTEXT, 0, 0);
 }
+// ============ 第二部分：进程管理、配置保存加载、编码转换 ============
 
 void GetControlValues() {
     char buf[MAX_URL_LEN];
@@ -644,8 +649,6 @@ DWORD WINAPI LogReaderThread(LPVOID lpParam) {
     while (isProcessRunning && hLogPipe) {
         if (ReadFile(hLogPipe, buf, sizeof(buf)-1, &read, NULL) && read > 0) {
             buf[read] = 0;
-            
-            // 直接使用系统默认编码（GBK）
             AppendLogAsync(buf);
         } else {
             break; 
@@ -688,124 +691,6 @@ void LoadConfig() {
         else if (!strcmp(line, "dns")) strcpy(currentConfig.dns, val);
         else if (!strcmp(line, "ech")) strcpy(currentConfig.ech, val);
     }
-    fclose(f);
-}
-
-// 加载节点配置（使用索引）
-void LoadNodeConfigByIndex(int nodeIndex, BOOL autoStart) {
-    char fileName[MAX_PATH];
-    snprintf(fileName, sizeof(fileName), "nodes/node_%d.ini", nodeIndex);
-    
-    FILE* f = fopen(fileName, "r");
-    if (!f) {
-        char logMsg[512];
-        snprintf(logMsg, sizeof(logMsg), "[节点] 配置文件不存在: %s\r\n", fileName);
-        AppendLog(logMsg);
-        return;
-    }
-    
-    char line[MAX_URL_LEN];
-    while (fgets(line, sizeof(line), f)) {
-        char* val = strchr(line, '=');
-        if (!val) continue;
-        *val++ = 0;
-        
-        // 移除换行符和回车符
-        size_t valLen = strlen(val);
-        while (valLen > 0 && (val[valLen-1] == '\n' || val[valLen-1] == '\r')) {
-            val[--valLen] = 0;
-        }
-
-        if (!strcmp(line, "configName")) strcpy(currentConfig.configName, val);
-        else if (!strcmp(line, "server")) strcpy(currentConfig.server, val);
-        else if (!strcmp(line, "listen")) strcpy(currentConfig.listen, val);
-        else if (!strcmp(line, "token")) strcpy(currentConfig.token, val);
-        else if (!strcmp(line, "ip")) strcpy(currentConfig.ip, val);
-        else if (!strcmp(line, "dns")) strcpy(currentConfig.dns, val);
-        else if (!strcmp(line, "ech")) strcpy(currentConfig.ech, val);
-    }
-    fclose(f);
-    
-    SetControlValues();
-    
-    if (autoStart) {
-        if (isProcessRunning) {
-            char logMsg[512];
-            snprintf(logMsg, sizeof(logMsg), "[节点] 正在切换到: %s\r\n", currentConfig.configName);
-            AppendLog(logMsg);
-            AppendLog("[节点] 停止当前进程...\r\n");
-            StopProcess();
-            Sleep(500);
-            AppendLog("[节点] 启动新节点...\r\n");
-            StartProcess();
-        } else {
-            char logMsg[512];
-            snprintf(logMsg, sizeof(logMsg), "[节点] 启动节点: %s\r\n", currentConfig.configName);
-            AppendLog(logMsg);
-            StartProcess();
-        }
-    } else {
-        char logMsg[512];
-        snprintf(logMsg, sizeof(logMsg), "[节点] 查看配置: %s\r\n", currentConfig.configName);
-        AppendLog(logMsg);
-    }
-}
-
-// 保存节点列表到文件
-void SaveNodeList() {
-    FILE* f = fopen("nodes/nodelist.txt", "w");
-    if (!f) return;
-    
-    int count = SendMessage(hNodeList, LB_GETCOUNT, 0, 0);
-    for (int i = 0; i < count; i++) {
-        char nodeName[MAX_SMALL_LEN];
-        SendMessage(hNodeList, LB_GETTEXT, i, (LPARAM)nodeName);
-        fprintf(f, "%s\n", nodeName);
-    }
-    fclose(f);
-}
-
-// 启动时加载节点列表
-void LoadNodeList() {
-    FILE* f = fopen("nodes/nodelist.txt", "r");
-    if (!f) return;
-    
-    SendMessage(hNodeList, LB_RESETCONTENT, 0, 0);
-    
-    char line[MAX_SMALL_LEN];
-    while (fgets(line, sizeof(line), f)) {
-        // 移除换行符和回车符
-        size_t len = strlen(line);
-        while (len > 0 && (line[len-1] == '\n' || line[len-1] == '\r')) {
-            line[--len] = 0;
-        }
-        
-        if (len > 0) {
-            SendMessage(hNodeList, LB_ADDSTRING, 0, (LPARAM)line);
-        }
-    }
-    fclose(f);
-    
-    int nodeCount = SendMessage(hNodeList, LB_GETCOUNT, 0, 0);
-    if (nodeCount > 0) {
-        char logMsg[256];
-        snprintf(logMsg, sizeof(logMsg), "[订阅] 已加载 %d 个节点\r\n", nodeCount);
-        AppendLog(logMsg);
-    }
-}
-
-void SaveNodeConfig(int nodeIndex) {
-    CreateDirectory("nodes", NULL);
-    
-    char fileName[MAX_PATH];
-    snprintf(fileName, sizeof(fileName), "nodes/node_%d.ini", nodeIndex);
-    
-    FILE* f = fopen(fileName, "w");
-    if (!f) return;
-    
-    fprintf(f, "[ECHTunnel]\r\nconfigName=%s\r\nserver=%s\r\nlisten=%s\r\ntoken=%s\r\nip=%s\r\ndns=%s\r\nech=%s\r\n",
-        currentConfig.configName, currentConfig.server, currentConfig.listen, currentConfig.token, 
-        currentConfig.ip, currentConfig.dns, currentConfig.ech);
     fclose(f);
 }
 
@@ -897,6 +782,294 @@ void LoadConfigFromFile() {
     }
 }
 
+// UTF-8 转 GBK
+char* UTF8ToGBK(const char* utf8Str) {
+    if (!utf8Str || strlen(utf8Str) == 0) return strdup("");
+    
+    int wideLen = MultiByteToWideChar(CP_UTF8, 0, utf8Str, -1, NULL, 0);
+    if (wideLen == 0) return strdup(utf8Str);
+    
+    wchar_t* wideStr = (wchar_t*)malloc(wideLen * sizeof(wchar_t));
+    if (!wideStr) return strdup(utf8Str);
+    
+    MultiByteToWideChar(CP_UTF8, 0, utf8Str, -1, wideStr, wideLen);
+    
+    int gbkLen = WideCharToMultiByte(CP_ACP, 0, wideStr, -1, NULL, 0, NULL, NULL);
+    if (gbkLen == 0) {
+        free(wideStr);
+        return strdup(utf8Str);
+    }
+    
+    char* gbkStr = (char*)malloc(gbkLen);
+    if (!gbkStr) {
+        free(wideStr);
+        return strdup(utf8Str);
+    }
+    
+    WideCharToMultiByte(CP_ACP, 0, wideStr, -1, gbkStr, gbkLen, NULL, NULL);
+    free(wideStr);
+    
+    return gbkStr;
+}
+
+// GBK 转 UTF-8
+char* GBKToUTF8(const char* gbkStr) {
+    if (!gbkStr || strlen(gbkStr) == 0) return strdup("");
+    
+    int wideLen = MultiByteToWideChar(CP_ACP, 0, gbkStr, -1, NULL, 0);
+    if (wideLen == 0) return strdup(gbkStr);
+    
+    wchar_t* wideStr = (wchar_t*)malloc(wideLen * sizeof(wchar_t));
+    if (!wideStr) return strdup(gbkStr);
+    
+    MultiByteToWideChar(CP_ACP, 0, gbkStr, -1, wideStr, wideLen);
+    
+    int utf8Len = WideCharToMultiByte(CP_UTF8, 0, wideStr, -1, NULL, 0, NULL, NULL);
+    if (utf8Len == 0) {
+        free(wideStr);
+        return strdup(gbkStr);
+    }
+    
+    char* utf8Str = (char*)malloc(utf8Len);
+    if (!utf8Str) {
+        free(wideStr);
+        return strdup(gbkStr);
+    }
+    
+    WideCharToMultiByte(CP_UTF8, 0, wideStr, -1, utf8Str, utf8Len, NULL, NULL);
+    free(wideStr);
+    
+    return utf8Str;
+}
+
+// URL 解码
+char* URLDecode(const char* str) {
+    if (!str) return NULL;
+    
+    size_t len = strlen(str);
+    char* decoded = (char*)malloc(len + 1);
+    if (!decoded) return NULL;
+    
+    size_t i = 0, j = 0;
+    while (i < len) {
+        if (str[i] == '%' && i + 2 < len) {
+            char hex[3] = {str[i+1], str[i+2], 0};
+            decoded[j++] = (char)strtol(hex, NULL, 16);
+            i += 3;
+        } else if (str[i] == '+') {
+            decoded[j++] = ' ';
+            i++;
+        } else {
+            decoded[j++] = str[i++];
+        }
+    }
+    decoded[j] = '\0';
+    
+    return decoded;
+}
+
+// 检测文件编码
+BOOL IsUTF8File(const char* fileName) {
+    FILE* f = fopen(fileName, "rb");
+    if (!f) return FALSE;
+    
+    unsigned char bom[3];
+    size_t read = fread(bom, 1, 3, f);
+    fclose(f);
+    
+    if (read == 3 && bom[0] == 0xEF && bom[1] == 0xBB && bom[2] == 0xBF) {
+        return TRUE;
+    }
+    
+    return FALSE;
+}
+
+// 保存节点配置
+void SaveNodeConfig(int nodeIndex) {
+    CreateDirectory("nodes", NULL);
+    
+    char fileName[MAX_PATH];
+    snprintf(fileName, sizeof(fileName), "nodes/node_%d.ini", nodeIndex);
+    
+    FILE* f = fopen(fileName, "wb");
+    if (!f) return;
+    
+    fputc(0xEF, f);
+    fputc(0xBB, f);
+    fputc(0xBF, f);
+    
+    char* utf8ConfigName = GBKToUTF8(currentConfig.configName);
+    char* utf8Server = GBKToUTF8(currentConfig.server);
+    char* utf8Token = GBKToUTF8(currentConfig.token);
+    char* utf8Ip = GBKToUTF8(currentConfig.ip);
+    char* utf8Dns = GBKToUTF8(currentConfig.dns);
+    char* utf8Ech = GBKToUTF8(currentConfig.ech);
+    
+    fprintf(f, "[ECHTunnel]\r\n");
+    fprintf(f, "configName=%s\r\n", utf8ConfigName ? utf8ConfigName : currentConfig.configName);
+    fprintf(f, "server=%s\r\n", utf8Server ? utf8Server : currentConfig.server);
+    fprintf(f, "listen=%s\r\n", currentConfig.listen);
+    fprintf(f, "token=%s\r\n", utf8Token ? utf8Token : currentConfig.token);
+    fprintf(f, "ip=%s\r\n", utf8Ip ? utf8Ip : currentConfig.ip);
+    fprintf(f, "dns=%s\r\n", utf8Dns ? utf8Dns : currentConfig.dns);
+    fprintf(f, "ech=%s\r\n", utf8Ech ? utf8Ech : currentConfig.ech);
+    
+    if (utf8ConfigName) free(utf8ConfigName);
+    if (utf8Server) free(utf8Server);
+    if (utf8Token) free(utf8Token);
+    if (utf8Ip) free(utf8Ip);
+    if (utf8Dns) free(utf8Dns);
+    if (utf8Ech) free(utf8Ech);
+    
+    fclose(f);
+}
+
+// 加载节点配置
+void LoadNodeConfigByIndex(int nodeIndex, BOOL autoStart) {
+    char fileName[MAX_PATH];
+    snprintf(fileName, sizeof(fileName), "nodes/node_%d.ini", nodeIndex);
+    
+    BOOL isUTF8 = IsUTF8File(fileName);
+    FILE* f = fopen(fileName, isUTF8 ? "rb" : "r");
+    if (!f) {
+        char logMsg[512];
+        snprintf(logMsg, sizeof(logMsg), "[节点] 配置文件不存在: %s\r\n", fileName);
+        AppendLog(logMsg);
+        return;
+    }
+    
+    if (isUTF8) {
+        fseek(f, 3, SEEK_SET);
+    }
+    
+    char line[MAX_URL_LEN];
+    while (fgets(line, sizeof(line), f)) {
+        char* val = strchr(line, '=');
+        if (!val) continue;
+        *val++ = 0;
+        
+        size_t valLen = strlen(val);
+        while (valLen > 0 && (val[valLen-1] == '\n' || val[valLen-1] == '\r')) {
+            val[--valLen] = 0;
+        }
+        
+        char* displayValue = val;
+        char* convertedValue = NULL;
+        if (isUTF8) {
+            convertedValue = UTF8ToGBK(val);
+            if (convertedValue) {
+                displayValue = convertedValue;
+            }
+        }
+
+        if (!strcmp(line, "configName")) strcpy(currentConfig.configName, displayValue);
+        else if (!strcmp(line, "server")) strcpy(currentConfig.server, displayValue);
+        else if (!strcmp(line, "listen")) strcpy(currentConfig.listen, displayValue);
+        else if (!strcmp(line, "token")) strcpy(currentConfig.token, displayValue);
+        else if (!strcmp(line, "ip")) strcpy(currentConfig.ip, displayValue);
+        else if (!strcmp(line, "dns")) strcpy(currentConfig.dns, displayValue);
+        else if (!strcmp(line, "ech")) strcpy(currentConfig.ech, displayValue);
+        
+        if (convertedValue) free(convertedValue);
+    }
+    fclose(f);
+    
+    SetControlValues();
+    
+    if (autoStart) {
+        if (isProcessRunning) {
+            char logMsg[512];
+            snprintf(logMsg, sizeof(logMsg), "[节点] 正在切换到: %s\r\n", currentConfig.configName);
+            AppendLog(logMsg);
+            AppendLog("[节点] 停止当前进程...\r\n");
+            StopProcess();
+            Sleep(500);
+            AppendLog("[节点] 启动新节点...\r\n");
+            StartProcess();
+        } else {
+            char logMsg[512];
+            snprintf(logMsg, sizeof(logMsg), "[节点] 启动节点: %s\r\n", currentConfig.configName);
+            AppendLog(logMsg);
+            StartProcess();
+        }
+    } else {
+        char logMsg[512];
+        snprintf(logMsg, sizeof(logMsg), "[节点] 查看配置: %s\r\n", currentConfig.configName);
+        AppendLog(logMsg);
+    }
+}
+
+// 保存节点列表
+void SaveNodeList() {
+    CreateDirectory("nodes", NULL);
+    
+    FILE* f = fopen("nodes/nodelist.txt", "wb");
+    if (!f) return;
+    
+    fputc(0xEF, f);
+    fputc(0xBB, f);
+    fputc(0xBF, f);
+    
+    int count = SendMessage(hNodeList, LB_GETCOUNT, 0, 0);
+    for (int i = 0; i < count; i++) {
+        char nodeName[MAX_SMALL_LEN];
+        SendMessage(hNodeList, LB_GETTEXT, i, (LPARAM)nodeName);
+        
+        char* utf8Name = GBKToUTF8(nodeName);
+        if (utf8Name) {
+            fprintf(f, "%s\r\n", utf8Name);
+            free(utf8Name);
+        } else {
+            fprintf(f, "%s\r\n", nodeName);
+        }
+    }
+    fclose(f);
+}
+
+// 加载节点列表
+void LoadNodeList() {
+    BOOL isUTF8 = IsUTF8File("nodes/nodelist.txt");
+    FILE* f = fopen("nodes/nodelist.txt", isUTF8 ? "rb" : "r");
+    if (!f) return;
+    
+    if (isUTF8) {
+        fseek(f, 3, SEEK_SET);
+    }
+    
+    SendMessage(hNodeList, LB_RESETCONTENT, 0, 0);
+    
+    char line[MAX_SMALL_LEN];
+    while (fgets(line, sizeof(line), f)) {
+        size_t len = strlen(line);
+        while (len > 0 && (line[len-1] == '\n' || line[len-1] == '\r')) {
+            line[--len] = 0;
+        }
+        
+        if (len > 0) {
+            if (isUTF8) {
+                char* gbkName = UTF8ToGBK(line);
+                if (gbkName) {
+                    SendMessage(hNodeList, LB_ADDSTRING, 0, (LPARAM)gbkName);
+                    free(gbkName);
+                } else {
+                    SendMessage(hNodeList, LB_ADDSTRING, 0, (LPARAM)line);
+                }
+            } else {
+                SendMessage(hNodeList, LB_ADDSTRING, 0, (LPARAM)line);
+            }
+        }
+    }
+    fclose(f);
+    
+    int nodeCount = SendMessage(hNodeList, LB_GETCOUNT, 0, 0);
+    if (nodeCount > 0) {
+        char logMsg[256];
+        snprintf(logMsg, sizeof(logMsg), "[订阅] 已加载 %d 个节点\r\n", nodeCount);
+        AppendLog(logMsg);
+    }
+}
+// ============ 第三部分：Base64解码、订阅解析、网络获取 ============
+
 // Base64 解码函数
 char* base64_decode(const char* input, size_t* out_len) {
     static const unsigned char base64_table[256] = {
@@ -921,7 +1094,6 @@ char* base64_decode(const char* input, size_t* out_len) {
     size_t in_len = strlen(input);
     if (in_len == 0) return NULL;
     
-    // 计算输出长度
     size_t padding = 0;
     if (input[in_len - 1] == '=') padding++;
     if (in_len > 1 && input[in_len - 2] == '=') padding++;
@@ -963,7 +1135,6 @@ char* base64_decode(const char* input, size_t* out_len) {
 BOOL is_base64_encoded(const char* data) {
     if (!data || strlen(data) == 0) return FALSE;
     
-    // 检查是否包含换行符或明显的文本内容（如 ech://）
     if (strstr(data, "ech://") || strstr(data, "ECH://") || 
         strstr(data, "\r\n") || strstr(data, "\n")) {
         return FALSE;
@@ -972,22 +1143,20 @@ BOOL is_base64_encoded(const char* data) {
     size_t len = strlen(data);
     size_t valid_chars = 0;
     
-    // Base64 字符集
     for (size_t i = 0; i < len; i++) {
         char c = data[i];
         if ((c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') || 
             (c >= '0' && c <= '9') || c == '+' || c == '/' || c == '=') {
             valid_chars++;
         } else if (c != '\r' && c != '\n' && c != ' ') {
-            // 包含非Base64字符
             return FALSE;
         }
     }
     
-    // 如果大部分字符是Base64字符，认为是Base64编码
     return (valid_chars * 100 / len) > 90;
 }
 
+// 解析订阅数据
 void ParseSubscriptionData(const char* data) {
     if (!data || strlen(data) == 0) {
         AppendLog("[订阅] 订阅数据为空\r\n");
@@ -996,7 +1165,6 @@ void ParseSubscriptionData(const char* data) {
     
     SendMessage(hNodeList, LB_RESETCONTENT, 0, 0);
     
-    // 检查是否需要Base64解码
     char* dataCopy = NULL;
     if (is_base64_encoded(data)) {
         AppendLog("[订阅] 检测到Base64编码，正在解码...\r\n");
@@ -1031,13 +1199,23 @@ void ParseSubscriptionData(const char* data) {
             char dns[MAX_SMALL_LEN] = {0};
             char ech[MAX_SMALL_LEN] = {0};
             
+            // 分离节点名称和参数部分，# 后面到行尾都是节点名称
             char* nameStart = strchr(line, '#');
             if (nameStart) {
-                strncpy(nodeName, nameStart + 1, MAX_SMALL_LEN - 1);
-                nodeName[MAX_SMALL_LEN - 1] = '\0';
+                char* urlDecoded = URLDecode(nameStart + 1);
+                if (urlDecoded) {
+                    char* gbkName = UTF8ToGBK(urlDecoded);
+                    if (gbkName) {
+                        strncpy(nodeName, gbkName, MAX_SMALL_LEN - 1);
+                        nodeName[MAX_SMALL_LEN - 1] = '\0';
+                        free(gbkName);
+                    }
+                    free(urlDecoded);
+                }
                 *nameStart = '\0';
             }
             
+            // 解析参数部分 ech://server|token|ip|dns|ech
             char* p = line;
             if (strncmp(p, "ech://", 6) == 0 || strncmp(p, "ECH://", 6) == 0) {
                 p += 6;
@@ -1080,6 +1258,7 @@ void ParseSubscriptionData(const char* data) {
                 server[MAX_URL_LEN - 1] = '\0';
             }
             
+            // 如果没有节点名称，使用服务器地址
             if (strlen(nodeName) == 0 && strlen(server) > 0) {
                 char* colonPos = strchr(server, ':');
                 if (colonPos) {
@@ -1112,7 +1291,7 @@ void ParseSubscriptionData(const char* data) {
                     strcpy(currentConfig.ech, ech);
                 }
                 
-                SaveNodeConfig(nodeCount);  // 使用索引保存
+                SaveNodeConfig(nodeCount);
                 SendMessage(hNodeList, LB_ADDSTRING, 0, (LPARAM)nodeName);
                 nodeCount++;
             }
@@ -1136,7 +1315,7 @@ void ParseSubscriptionData(const char* data) {
         char msg[256];
         snprintf(msg, sizeof(msg), "成功获取 %d 个节点", nodeCount);
         MessageBox(hMainWindow, msg, "订阅成功", MB_OK | MB_ICONINFORMATION);
-        SaveNodeList();  // 保存节点列表
+        SaveNodeList();
     } else if (filteredCount > 0) {
         snprintf(logMsg, sizeof(logMsg), 
             "订阅中未找到 ech:// 协议节点\n已过滤 %d 个其他协议节点", 
@@ -1147,6 +1326,7 @@ void ParseSubscriptionData(const char* data) {
     }
 }
 
+// 获取订阅
 void FetchSubscription() {
     char url[MAX_URL_LEN];
     GetWindowText(hSubscribeUrlEdit, url, sizeof(url));
