@@ -472,6 +472,8 @@ void CreateControls(HWND hwnd) {
     SendMessage(hNodeList, WM_SETFONT, (WPARAM)hFontUI, TRUE);
 
     curY += groupSubH + Scale(15);
+    int splitGap = Scale(15);
+    int halfGroupW = (groupW - splitGap) / 2;
     int group1H = Scale(110);
     HWND hGroup1 = CreateWindow("BUTTON", "核心配置", WS_VISIBLE | WS_CHILD | BS_GROUPBOX,
         margin, curY, groupW, group1H, hwnd, NULL, NULL, NULL);
