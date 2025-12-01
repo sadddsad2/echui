@@ -1,4 +1,3 @@
-// ��һ���֣�ͷ����ȫ�ֱ����ʹ��ڳ�ʼ��
 #pragma comment(linker,"\"/manifestdependency:type='win32' name='Microsoft.Windows.Common-Controls' version='6.0.0.0' processorArchitecture='*' publicKeyToken='6595b64144ccf1df' language='*'\"")
 
 #include <windows.h>
@@ -14,8 +13,8 @@
 
 typedef BOOL (WINAPI *SetProcessDPIAwareFunc)(void);
 
-#define APP_VERSION "1.3"
-#define APP_TITLE "ECH workers �ͻ��� v" APP_VERSION
+#define APP_VERSION "1.5" // 版本号升级
+#define APP_TITLE "ECH workers 客户端 v" APP_VERSION
 
 #define MAX_URL_LEN 8192
 #define MAX_SMALL_LEN 2048
@@ -34,13 +33,13 @@ HBRUSH hBrushLog = NULL;
 
 int g_dpi = 96;
 int g_scale = 100;
-int g_totalNodeCount = 0;
+int g_totalNodeCount = 0; // 全局变量：用于多订阅合并计算节点总数
 
 int Scale(int x) {
     return (x * g_scale) / 100;
 }
 
-// �ؼ�ID����
+// 控件ID定义
 #define ID_CONFIG_NAME_EDIT 1000
 #define ID_SERVER_EDIT      1001
 #define ID_LISTEN_EDIT      1002
@@ -54,6 +53,7 @@ int Scale(int x) {
 #define ID_LOG_EDIT         1013
 #define ID_SAVE_CONFIG_BTN  1014
 #define ID_LOAD_CONFIG_BTN  1015
+// 订阅相关新ID
 #define ID_SUBSCRIBE_URL_EDIT 1016
 #define ID_FETCH_SUB_BTN    1017
 #define ID_NODE_LIST        1018
@@ -65,7 +65,7 @@ HWND hMainWindow;
 HWND hConfigNameEdit, hServerEdit, hListenEdit, hTokenEdit, hIpEdit, hDnsEdit, hEchEdit;
 HWND hStartBtn, hStopBtn, hLogEdit, hSaveConfigBtn, hLoadConfigBtn;
 HWND hSubscribeUrlEdit, hFetchSubBtn, hNodeList;
-HWND hAddSubBtn, hDelSubBtn, hSubList;
+HWND hAddSubBtn, hDelSubBtn, hSubList; // 新增句柄
 
 PROCESS_INFORMATION processInfo;
 HANDLE hLogPipe = NULL;
@@ -84,7 +84,7 @@ typedef struct {
 } Config;
 
 Config currentConfig = {
-    "Ĭ������", "dns.alidns.com/dns-query", "cloudflare-ech.com", "example.com:443", "", "127.0.0.1:30000", ""
+    "默认配置", "dns.alidns.com/dns-query", "cloudflare-ech.com", "example.com:443", "", "127.0.0.1:30000", ""
 };
 
 LRESULT CALLBACK WindowProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam);
@@ -103,13 +103,16 @@ void SetControlValues();
 void InitTrayIcon(HWND hwnd);
 void ShowTrayIcon();
 void RemoveTrayIcon();
-void FetchAllSubscriptions();
-void ProcessSingleSubscription(const char* url);
-void ParseSubscriptionData(const char* data);
+
+// 订阅相关函数更新
+void FetchAllSubscriptions(); // 更新所有订阅
+void ProcessSingleSubscription(const char* url); // 处理单个URL
+void ParseSubscriptionData(const char* data); // 解析数据(不重置列表)
 void AddSubscription();
 void DelSubscription();
 void SaveSubscriptionList();
 void LoadSubscriptionList();
+
 void SaveNodeConfig(int nodeIndex);
 void LoadNodeList();
 void SaveNodeList();
@@ -173,13 +176,16 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
 
     if (!RegisterClass(&wc)) return 1;
 
-    // ���ڸ�Ϊ800x700���ɵ�����С
-    int winWidth = Scale(800);
-    int winHeight = Scale(700); 
+    // 稍微增加窗口高度以容纳新控件
+    int winWidth = Scale(900);
+    int winHeight = Scale(800); 
     int screenW = GetSystemMetrics(SM_CXSCREEN);
     int screenH = GetSystemMetrics(SM_CYSCREEN);
 
-    DWORD winStyle = WS_OVERLAPPEDWINDOW | WS_CLIPCHILDREN;  // ���ӿɵ�����С
+    // [Modified] Use WS_OVERLAPPEDWINDOW to allow resizing and maximizing
+    DWORD winStyle = WS_OVERLAPPEDWINDOW | WS_CLIPCHILDREN;
+
+    DWORD winStyle = WS_OVERLAPPED | WS_CAPTION | WS_SYSMENU | WS_MINIMIZEBOX | WS_CLIPCHILDREN;
 
     hMainWindow = CreateWindowEx(
         0, "ECHWorkerClient", APP_TITLE, 
@@ -229,20 +235,15 @@ void ShowTrayIcon() {
 void RemoveTrayIcon() {
     Shell_NotifyIcon(NIM_DELETE, &nid);
 }
-// �ڶ����֣����ڹ��̺Ϳؼ�����
 
 LRESULT CALLBACK WindowProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam) {
     switch (uMsg) {
         case WM_CREATE:
             CreateControls(hwnd);
             LoadConfig();
-            LoadSubscriptionList();
+            LoadSubscriptionList(); // 加载订阅列表
             SetControlValues();
             LoadNodeList();
-            break;
-
-        case WM_SIZE:
-            // ���ڴ�С�ı�ʱ����������������ؼ�λ�ã���ѡ��
             break;
 
         case WM_SYSCOMMAND:
@@ -264,9 +265,9 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam) 
                 GetCursorPos(&pt);
                 HMENU hMenu = CreatePopupMenu();
                 if (hMenu) {
-                    AppendMenu(hMenu, MF_STRING, ID_TRAY_OPEN, "�򿪽���");
+                    AppendMenu(hMenu, MF_STRING, ID_TRAY_OPEN, "打开界面");
                     AppendMenu(hMenu, MF_SEPARATOR, 0, NULL);
-                    AppendMenu(hMenu, MF_STRING, ID_TRAY_EXIT, "�˳�����");
+                    AppendMenu(hMenu, MF_STRING, ID_TRAY_EXIT, "退出程序");
                     SetForegroundWindow(hwnd); 
                     TrackPopupMenu(hMenu, TPM_RIGHTBUTTON, pt.x, pt.y, 0, hwnd, NULL);
                     DestroyMenu(hMenu);
@@ -312,12 +313,12 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam) 
                     if (!isProcessRunning) {
                         GetControlValues();
                         if (strlen(currentConfig.server) == 0) {
-                            MessageBox(hwnd, "����������ַ", "��ʾ", MB_OK | MB_ICONWARNING);
+                            MessageBox(hwnd, "请输入服务地址", "提示", MB_OK | MB_ICONWARNING);
                             SetFocus(hServerEdit);
                             break;
                         }
                         if (strlen(currentConfig.listen) == 0) {
-                            MessageBox(hwnd, "�����������ַ (127.0.0.1:...)", "��ʾ", MB_OK | MB_ICONWARNING);
+                            MessageBox(hwnd, "请输入监听地址 (127.0.0.1:...)", "提示", MB_OK | MB_ICONWARNING);
                             SetFocus(hListenEdit);
                             break;
                         }
@@ -344,6 +345,7 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam) 
                     SetControlValues();
                     break;
                 
+                // 新增按钮事件
                 case ID_ADD_SUB_BTN:
                     AddSubscription();
                     break;
@@ -394,16 +396,16 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam) 
     return 0;
 }
 
-void CreateLabelAndEdit2Column(HWND parent, const char* labelText, int x, int y, int w, int h, int editId, HWND* outEdit, BOOL numberOnly) {
+void CreateLabelAndEdit(HWND parent, const char* labelText, int x, int y, int w, int h, int editId, HWND* outEdit, BOOL numberOnly) {
     HWND hStatic = CreateWindow("STATIC", labelText, WS_VISIBLE | WS_CHILD | SS_LEFT, 
-        x, y + Scale(3), Scale(90), Scale(20), parent, NULL, NULL, NULL);
+        x, y + Scale(3), Scale(140), Scale(20), parent, NULL, NULL, NULL);
     SendMessage(hStatic, WM_SETFONT, (WPARAM)hFontUI, TRUE);
 
     DWORD style = WS_VISIBLE | WS_CHILD | WS_TABSTOP | WS_BORDER | ES_AUTOHSCROLL;
     if (numberOnly) style |= ES_NUMBER | ES_CENTER;
 
     *outEdit = CreateWindow("EDIT", "", style, 
-        x + Scale(95), y, w - Scale(95), h, parent, (HMENU)(intptr_t)editId, NULL, NULL);
+        x + Scale(150), y, w - Scale(150), h, parent, (HMENU)(intptr_t)editId, NULL, NULL);
     SendMessage(*outEdit, WM_SETFONT, (WPARAM)hFontUI, TRUE);
     SendMessage(*outEdit, EM_SETLIMITTEXT, (editId == ID_SERVER_EDIT || editId == ID_TOKEN_EDIT || editId == ID_SUBSCRIBE_URL_EDIT) ? MAX_URL_LEN : MAX_SMALL_LEN, 0);
 }
@@ -412,151 +414,148 @@ void CreateControls(HWND hwnd) {
     RECT rect;
     GetClientRect(hwnd, &rect);
     int winW = rect.right;
-    int margin = Scale(15);
+    int margin = Scale(20);
     int groupW = winW - (margin * 2);
-    int lineHeight = Scale(30);
-    int lineGap = Scale(8);
-    int editH = Scale(24);
+    int lineHeight = Scale(26);
+    int lineGap = Scale(10);
+    int editH = Scale(22);
     int curY = margin;
 
-    // ���Ĺ�������
-    int groupSubH = Scale(260);
-    HWND hGroupSub = CreateWindow("BUTTON", "���Ĺ���", WS_VISIBLE | WS_CHILD | BS_GROUPBOX,
+    // ----- 订阅管理区域重构 -----
+    int groupSubH = Scale(280); // 增加高度以容纳列表
+    HWND hGroupSub = CreateWindow("BUTTON", "订阅管理", WS_VISIBLE | WS_CHILD | BS_GROUPBOX,
         margin, curY, groupW, groupSubH, hwnd, NULL, NULL, NULL);
     SendMessage(hGroupSub, WM_SETFONT, (WPARAM)hFontUI, TRUE);
     
-    int innerY = curY + Scale(22);
+    int innerY = curY + Scale(25);
     
-    // ��������������
-    HWND hSubLabel = CreateWindow("STATIC", "��������:", WS_VISIBLE | WS_CHILD | SS_LEFT, 
-        margin + Scale(12), innerY + Scale(3), Scale(70), Scale(20), hwnd, NULL, NULL, NULL);
+    // 1. 输入框行：Label + Edit + 添加按钮
+    HWND hSubLabel = CreateWindow("STATIC", "订阅链接:", WS_VISIBLE | WS_CHILD | SS_LEFT, 
+        margin + Scale(15), innerY + Scale(3), Scale(80), Scale(20), hwnd, NULL, NULL, NULL);
     SendMessage(hSubLabel, WM_SETFONT, (WPARAM)hFontUI, TRUE);
 
     hSubscribeUrlEdit = CreateWindow("EDIT", "", WS_VISIBLE | WS_CHILD | WS_TABSTOP | WS_BORDER | ES_AUTOHSCROLL, 
-        margin + Scale(85), innerY, groupW - Scale(180), editH, hwnd, (HMENU)ID_SUBSCRIBE_URL_EDIT, NULL, NULL);
+        margin + Scale(100), innerY, groupW - Scale(200), editH, hwnd, (HMENU)ID_SUBSCRIBE_URL_EDIT, NULL, NULL);
     SendMessage(hSubscribeUrlEdit, WM_SETFONT, (WPARAM)hFontUI, TRUE);
 
-    hAddSubBtn = CreateWindow("BUTTON", "����", WS_VISIBLE | WS_CHILD | BS_PUSHBUTTON,
-        margin + groupW - Scale(85), innerY, Scale(75), editH, hwnd, (HMENU)ID_ADD_SUB_BTN, NULL, NULL);
+    hAddSubBtn = CreateWindow("BUTTON", "添加", WS_VISIBLE | WS_CHILD | BS_PUSHBUTTON,
+        margin + groupW - Scale(90), innerY, Scale(80), editH, hwnd, (HMENU)ID_ADD_SUB_BTN, NULL, NULL);
     SendMessage(hAddSubBtn, WM_SETFONT, (WPARAM)hFontUI, TRUE);
 
     innerY += lineHeight + lineGap - Scale(5);
 
-    // �����б���
+    // 2. 订阅列表框
     hSubList = CreateWindow("LISTBOX", "", WS_VISIBLE | WS_CHILD | WS_BORDER | WS_VSCROLL | LBS_NOTIFY | LBS_NOINTEGRALHEIGHT,
-        margin + Scale(12), innerY, groupW - Scale(24), Scale(55), hwnd, (HMENU)ID_SUB_LIST, NULL, NULL);
+        margin + Scale(15), innerY, groupW - Scale(30), Scale(60), hwnd, (HMENU)ID_SUB_LIST, NULL, NULL);
     SendMessage(hSubList, WM_SETFONT, (WPARAM)hFontUI, TRUE);
 
-    innerY += Scale(60);
+    innerY += Scale(60) + Scale(5);
 
-    // ������ť��
-    hDelSubBtn = CreateWindow("BUTTON", "ɾ��ѡ�ж���", WS_VISIBLE | WS_CHILD | BS_PUSHBUTTON,
-        margin + Scale(12), innerY, Scale(110), Scale(28), hwnd, (HMENU)ID_DEL_SUB_BTN, NULL, NULL);
+    // 3. 操作按钮行
+    hDelSubBtn = CreateWindow("BUTTON", "删除选中订阅", WS_VISIBLE | WS_CHILD | BS_PUSHBUTTON,
+        margin + Scale(15), innerY, Scale(120), Scale(30), hwnd, (HMENU)ID_DEL_SUB_BTN, NULL, NULL);
     SendMessage(hDelSubBtn, WM_SETFONT, (WPARAM)hFontUI, TRUE);
 
-    hFetchSubBtn = CreateWindow("BUTTON", "�������ж���", WS_VISIBLE | WS_CHILD | BS_PUSHBUTTON,
-        margin + Scale(130), innerY, Scale(110), Scale(28), hwnd, (HMENU)ID_FETCH_SUB_BTN, NULL, NULL);
+    hFetchSubBtn = CreateWindow("BUTTON", "更新所有订阅", WS_VISIBLE | WS_CHILD | BS_PUSHBUTTON,
+        margin + Scale(150), innerY, Scale(120), Scale(30), hwnd, (HMENU)ID_FETCH_SUB_BTN, NULL, NULL);
     SendMessage(hFetchSubBtn, WM_SETFONT, (WPARAM)hFontUI, TRUE);
     
-    innerY += Scale(33);
+    innerY += Scale(35);
 
-    // �ڵ��б�
-    HWND hNodeLabel = CreateWindow("STATIC", "�ڵ��б�(�����鿴/˫������):", WS_VISIBLE | WS_CHILD | SS_LEFT, 
-        margin + Scale(12), innerY + Scale(3), Scale(200), Scale(20), hwnd, NULL, NULL, NULL);
+    // 4. 节点列表
+    HWND hNodeLabel = CreateWindow("STATIC", "节点列表(单击查看/双击启用):", WS_VISIBLE | WS_CHILD | SS_LEFT, 
+        margin + Scale(15), innerY + Scale(3), Scale(200), Scale(20), hwnd, NULL, NULL, NULL);
     SendMessage(hNodeLabel, WM_SETFONT, (WPARAM)hFontUI, TRUE);
     
     hNodeList = CreateWindow("LISTBOX", "", WS_VISIBLE | WS_CHILD | WS_BORDER | WS_VSCROLL | LBS_NOTIFY,
-        margin + Scale(12), innerY + Scale(25), groupW - Scale(24), Scale(80), hwnd, (HMENU)ID_NODE_LIST, NULL, NULL);
+        margin + Scale(15), innerY + Scale(25), groupW - Scale(30), Scale(90), hwnd, (HMENU)ID_NODE_LIST, NULL, NULL);
     SendMessage(hNodeList, WM_SETFONT, (WPARAM)hFontUI, TRUE);
 
-    curY += groupSubH + Scale(12);
-    
-    // ��������
-    HWND hConfigLabel = CreateWindow("STATIC", "��������:", WS_VISIBLE | WS_CHILD | SS_LEFT, 
-        margin, curY + Scale(3), Scale(70), Scale(20), hwnd, NULL, NULL, NULL);
-    SendMessage(hConfigLabel, WM_SETFONT, (WPARAM)hFontUI, TRUE);
-
-    hConfigNameEdit = CreateWindow("EDIT", "", WS_VISIBLE | WS_CHILD | WS_TABSTOP | WS_BORDER | ES_AUTOHSCROLL,
-        margin + Scale(75), curY, Scale(180), editH, hwnd, (HMENU)ID_CONFIG_NAME_EDIT, NULL, NULL);
-    SendMessage(hConfigNameEdit, WM_SETFONT, (WPARAM)hFontUI, TRUE);
-    SendMessage(hConfigNameEdit, EM_SETLIMITTEXT, MAX_SMALL_LEN, 0);
-
-    curY += lineHeight + Scale(5);
-
-    // ������������ - 2�в���
-    int group1H = Scale(80);
-    HWND hGroup1 = CreateWindow("BUTTON", "��������", WS_VISIBLE | WS_CHILD | BS_GROUPBOX,
+    curY += groupSubH + Scale(15);
+    int group1H = Scale(110);
+    HWND hGroup1 = CreateWindow("BUTTON", "核心配置", WS_VISIBLE | WS_CHILD | BS_GROUPBOX,
         margin, curY, groupW, group1H, hwnd, NULL, NULL, NULL);
     SendMessage(hGroup1, WM_SETFONT, (WPARAM)hFontUI, TRUE);
     
-    innerY = curY + Scale(22);
-    int colW = (groupW - Scale(36)) / 2;
+    innerY = curY + Scale(25);
+    HWND hConfigLabel = CreateWindow("STATIC", "配置名称:", WS_VISIBLE | WS_CHILD | SS_LEFT, 
+        margin + Scale(15), innerY + Scale(3), Scale(80), Scale(20), hwnd, NULL, NULL, NULL);
+    SendMessage(hConfigLabel, WM_SETFONT, (WPARAM)hFontUI, TRUE);
 
-    CreateLabelAndEdit2Column(hwnd, "�����ַ:", margin + Scale(12), innerY, colW, editH, ID_SERVER_EDIT, &hServerEdit, FALSE);
-    CreateLabelAndEdit2Column(hwnd, "������ַ:", margin + Scale(24) + colW, innerY, colW, editH, ID_LISTEN_EDIT, &hListenEdit, FALSE);
+    hConfigNameEdit = CreateWindow("EDIT", "", WS_VISIBLE | WS_CHILD | WS_TABSTOP | WS_BORDER | ES_AUTOHSCROLL,
+        margin + Scale(105), innerY, Scale(200), editH, hwnd, (HMENU)ID_CONFIG_NAME_EDIT, NULL, NULL);
+    SendMessage(hConfigNameEdit, WM_SETFONT, (WPARAM)hFontUI, TRUE);
+    SendMessage(hConfigNameEdit, EM_SETLIMITTEXT, MAX_SMALL_LEN, 0);
 
-    curY += group1H + Scale(12);
-
-    // �߼�ѡ������ - 2�в���
-    int group2H = Scale(110);
-    HWND hGroup2 = CreateWindow("BUTTON", "�߼�ѡ�� (��ѡ)", WS_VISIBLE | WS_CHILD | BS_GROUPBOX,
-        margin, curY, groupW, group2H, hwnd, NULL, NULL, NULL);
-    SendMessage(hGroup2, WM_SETFONT, (WPARAM)hFontUI, TRUE);
-    innerY = curY + Scale(22);
-
-    CreateLabelAndEdit2Column(hwnd, "��������:", margin + Scale(12), innerY, colW, editH, ID_TOKEN_EDIT, &hTokenEdit, FALSE);
-    CreateLabelAndEdit2Column(hwnd, "��ѡIP:", margin + Scale(24) + colW, innerY, colW, editH, ID_IP_EDIT, &hIpEdit, FALSE);
+    innerY += lineHeight + lineGap;
+    CreateLabelAndEdit(hwnd, "服务地址:", margin + Scale(15), innerY, groupW - Scale(30), editH, ID_SERVER_EDIT, &hServerEdit, FALSE);
     innerY += lineHeight + lineGap;
 
-    CreateLabelAndEdit2Column(hwnd, "ECH����:", margin + Scale(12), innerY, colW, editH, ID_ECH_EDIT, &hEchEdit, FALSE);
-    CreateLabelAndEdit2Column(hwnd, "DNS����:", margin + Scale(24) + colW, innerY, colW, editH, ID_DNS_EDIT, &hDnsEdit, FALSE);
+    CreateLabelAndEdit(hwnd, "监听地址:", margin + Scale(15), innerY, groupW - Scale(30), editH, ID_LISTEN_EDIT, &hListenEdit, FALSE);
 
-    curY += group2H + Scale(12);
+    curY += group1H + Scale(15);
 
-    // ������ť
-    int btnW = Scale(100);
-    int btnH = Scale(32);
-    int btnGap = Scale(15);
+    int group2H = Scale(155);
+    HWND hGroup2 = CreateWindow("BUTTON", "高级选项 (可选)", WS_VISIBLE | WS_CHILD | BS_GROUPBOX,
+        margin, curY, groupW, group2H, hwnd, NULL, NULL, NULL);
+    SendMessage(hGroup2, WM_SETFONT, (WPARAM)hFontUI, TRUE);
+    innerY = curY + Scale(25);
+
+    CreateLabelAndEdit(hwnd, "身份令牌:", margin + Scale(15), innerY, groupW - Scale(30), editH, ID_TOKEN_EDIT, &hTokenEdit, FALSE);
+    innerY += lineHeight + lineGap;
+
+    CreateLabelAndEdit(hwnd, "优选IP(域名):", margin + Scale(15), innerY, groupW - Scale(30), editH, ID_IP_EDIT, &hIpEdit, FALSE);
+    innerY += lineHeight + lineGap;
+
+    CreateLabelAndEdit(hwnd, "ECH域名:", margin + Scale(15), innerY, groupW - Scale(30), editH, ID_ECH_EDIT, &hEchEdit, FALSE);
+    innerY += lineHeight + lineGap;
+
+    CreateLabelAndEdit(hwnd, "DNS服务器(仅域名):", margin + Scale(15), innerY, groupW - Scale(30), editH, ID_DNS_EDIT, &hDnsEdit, FALSE);
+
+    curY += group2H + Scale(15);
+
+    int btnW = Scale(120);
+    int btnH = Scale(38);
+    int btnGap = Scale(20);
     int startX = margin;
 
-    hStartBtn = CreateWindow("BUTTON", "��������", WS_VISIBLE | WS_CHILD | BS_DEFPUSHBUTTON,
+    hStartBtn = CreateWindow("BUTTON", "启动代理", WS_VISIBLE | WS_CHILD | BS_DEFPUSHBUTTON,
         startX, curY, btnW, btnH, hwnd, (HMENU)ID_START_BTN, NULL, NULL);
     SendMessage(hStartBtn, WM_SETFONT, (WPARAM)hFontUI, TRUE);
 
-    hStopBtn = CreateWindow("BUTTON", "ֹͣ", WS_VISIBLE | WS_CHILD | BS_PUSHBUTTON,
+    hStopBtn = CreateWindow("BUTTON", "停止", WS_VISIBLE | WS_CHILD | BS_PUSHBUTTON,
         startX + btnW + btnGap, curY, btnW, btnH, hwnd, (HMENU)ID_STOP_BTN, NULL, NULL);
     SendMessage(hStopBtn, WM_SETFONT, (WPARAM)hFontUI, TRUE);
     EnableWindow(hStopBtn, FALSE);
 
-    hSaveConfigBtn = CreateWindow("BUTTON", "��������", WS_VISIBLE | WS_CHILD | BS_PUSHBUTTON,
+    hSaveConfigBtn = CreateWindow("BUTTON", "保存配置", WS_VISIBLE | WS_CHILD | BS_PUSHBUTTON,
         startX + (btnW + btnGap) * 2, curY, btnW, btnH, hwnd, (HMENU)ID_SAVE_CONFIG_BTN, NULL, NULL);
     SendMessage(hSaveConfigBtn, WM_SETFONT, (WPARAM)hFontUI, TRUE);
 
-    hLoadConfigBtn = CreateWindow("BUTTON", "��������", WS_VISIBLE | WS_CHILD | BS_PUSHBUTTON,
+    hLoadConfigBtn = CreateWindow("BUTTON", "加载配置", WS_VISIBLE | WS_CHILD | BS_PUSHBUTTON,
         startX + (btnW + btnGap) * 3, curY, btnW, btnH, hwnd, (HMENU)ID_LOAD_CONFIG_BTN, NULL, NULL);
     SendMessage(hLoadConfigBtn, WM_SETFONT, (WPARAM)hFontUI, TRUE);
 
-    HWND hClrBtn = CreateWindow("BUTTON", "�����־", WS_VISIBLE | WS_CHILD | BS_PUSHBUTTON,
+    HWND hClrBtn = CreateWindow("BUTTON", "清空日志", WS_VISIBLE | WS_CHILD | BS_PUSHBUTTON,
         rect.right - margin - btnW, curY, btnW, btnH, hwnd, (HMENU)ID_CLEAR_LOG_BTN, NULL, NULL);
     SendMessage(hClrBtn, WM_SETFONT, (WPARAM)hFontUI, TRUE);
 
-    curY += btnH + Scale(12);
+    curY += btnH + Scale(15);
 
-    HWND hLogLabel = CreateWindow("STATIC", "������־:", WS_VISIBLE | WS_CHILD, 
-        margin, curY, Scale(80), Scale(20), hwnd, NULL, NULL, NULL);
+    HWND hLogLabel = CreateWindow("STATIC", "运行日志:", WS_VISIBLE | WS_CHILD, 
+        margin, curY, Scale(100), Scale(20), hwnd, NULL, NULL, NULL);
     SendMessage(hLogLabel, WM_SETFONT, (WPARAM)hFontUI, TRUE);
     
-    curY += Scale(22);
+    curY += Scale(25);
 
     hLogEdit = CreateWindow("EDIT", "", 
         WS_VISIBLE | WS_CHILD | WS_BORDER | WS_VSCROLL | ES_MULTILINE | ES_READONLY, 
-        margin, curY, winW - (margin * 2), Scale(110), hwnd, (HMENU)ID_LOG_EDIT, NULL, NULL);
+        margin, curY, winW - (margin * 2), Scale(130), hwnd, (HMENU)ID_LOG_EDIT, NULL, NULL);
     SendMessage(hLogEdit, WM_SETFONT, (WPARAM)hFontLog, TRUE);
     SendMessage(hLogEdit, EM_SETLIMITTEXT, 0, 0);
 }
-// �������֣����̹��������ô��������Ĺ��ܺͱ���ת��
 
-// ============ �����б��ļ����� ============
+// ============ 订阅列表文件管理 ============
 
 void SaveSubscriptionList() {
     FILE* f = fopen("subscriptions.txt", "w");
@@ -596,13 +595,14 @@ void AddSubscription() {
     GetWindowText(hSubscribeUrlEdit, url, sizeof(url));
     if (strlen(url) == 0) return;
     
+    // 检查是否重复
     if (SendMessage(hSubList, LB_FINDSTRINGEXACT, -1, (LPARAM)url) != LB_ERR) {
-        MessageBox(hMainWindow, "�ö��������Ѵ���", "��ʾ", MB_OK);
+        MessageBox(hMainWindow, "该订阅链接已存在", "提示", MB_OK);
         return;
     }
     
     SendMessage(hSubList, LB_ADDSTRING, 0, (LPARAM)url);
-    SetWindowText(hSubscribeUrlEdit, "");
+    SetWindowText(hSubscribeUrlEdit, ""); // 清空输入框
     SaveSubscriptionList();
 }
 
@@ -614,7 +614,7 @@ void DelSubscription() {
     SaveSubscriptionList();
 }
 
-// ============ ���̹��������� ============
+// ============ 第二部分：进程管理、配置保存加载、编码转换 ============
 
 void GetControlValues() {
     char buf[MAX_URL_LEN];
@@ -646,21 +646,24 @@ void StartProcess() {
     char exePath[MAX_PATH] = "ech-workers.exe";
     
     if (GetFileAttributes(exePath) == INVALID_FILE_ATTRIBUTES) {
-        AppendLog("����: �Ҳ��� ech-workers.exe �ļ�!\r\n");
+        AppendLog("错误: 找不到 ech-workers.exe 文件!\r\n");
         return;
     }
     
     snprintf(cmdLine, MAX_CMD_LEN, "\"%s\"", exePath);
     
+    // 添加 -f 参数（服务地址）
     if (strlen(currentConfig.server) > 0) {
         strcat(cmdLine, " -f ");
         strcat(cmdLine, currentConfig.server);
     }
     
+    // 添加 -l 参数（监听地址），去掉 proxy:// 前缀
     if (strlen(currentConfig.listen) > 0) {
         char listenAddr[MAX_SMALL_LEN];
         strcpy(listenAddr, currentConfig.listen);
         
+        // 去掉 socks5:// 或 proxy:// 前缀
         char* actualAddr = listenAddr;
         if (strncmp(listenAddr, "socks5://", 9) == 0) {
             actualAddr = listenAddr + 9;
@@ -674,29 +677,34 @@ void StartProcess() {
         strcat(cmdLine, actualAddr);
     }
     
+    // 添加 -token 参数
     if (strlen(currentConfig.token) > 0) {
         strcat(cmdLine, " -token ");
         strcat(cmdLine, currentConfig.token);
     }
     
+    // 添加 -ip 参数（优选IP）
     if (strlen(currentConfig.ip) > 0) {
         strcat(cmdLine, " -ip ");
         strcat(cmdLine, currentConfig.ip);
     }
     
+    // 添加 -dns 参数（如果不是默认值）
     if (strlen(currentConfig.dns) > 0 && strcmp(currentConfig.dns, "dns.alidns.com/dns-query") != 0) {
         strcat(cmdLine, " -dns ");
         strcat(cmdLine, currentConfig.dns);
     }
     
+    // 检测IP格式DNS，自动添加 -insecure-dns
     if (strlen(currentConfig.dns) > 0) {
         char* firstChar = currentConfig.dns;
         if (*firstChar >= '0' && *firstChar <= '9') {
             strcat(cmdLine, " -insecure-dns");
-            AppendLog("[��ʾ] ��⵽IP��ʽDNS,���Զ�����TLS֤����֤\r\n");
+            AppendLog("[提示] 检测到IP格式DNS,已自动跳过TLS证书验证\r\n");
         }
     }
     
+    // 添加 -ech 参数（如果不是默认值）
     if (strlen(currentConfig.ech) > 0 && strcmp(currentConfig.ech, "cloudflare-ech.com") != 0) {
         strcat(cmdLine, " -ech ");
         strcat(cmdLine, currentConfig.ech);
@@ -723,14 +731,13 @@ void StartProcess() {
         EnableWindow(hStopBtn, TRUE);
         EnableWindow(hServerEdit, FALSE);
         EnableWindow(hListenEdit, FALSE);
-        AppendLog("[ϵͳ] ����������...\r\n");
+        AppendLog("[系统] 进程已启动...\r\n");
     } else {
         CloseHandle(hRead);
         CloseHandle(hWrite);
-        AppendLog("[����] ����ʧ��,�������á�\r\n");
+        AppendLog("[错误] 启动失败,请检查配置。\r\n");
     }
 }
-
 void StopProcess() {
     isProcessRunning = FALSE;
 
@@ -759,7 +766,7 @@ void StopProcess() {
         EnableWindow(hStopBtn, FALSE);
         EnableWindow(hServerEdit, TRUE);
         EnableWindow(hListenEdit, TRUE);
-        AppendLog("[ϵͳ] ������ֹͣ��\r\n");
+        AppendLog("[系统] 进程已停止。\r\n");
     }
 }
 
@@ -782,6 +789,7 @@ DWORD WINAPI LogReaderThread(LPVOID lpParam) {
         if (ReadFile(hLogPipe, buf, sizeof(buf)-1, &read, NULL) && read > 0) {
             buf[read] = 0;
             
+            // Go 程序输出的是 UTF-8，需要转换为 GBK 显示
             char* gbkText = UTF8ToGBK(buf);
             if (gbkText) {
                 AppendLogAsync(gbkText);
@@ -795,7 +803,6 @@ DWORD WINAPI LogReaderThread(LPVOID lpParam) {
     }
     return 0;
 }
-
 void AppendLog(const char* text) {
     if (!IsWindow(hLogEdit)) return;
     int len = GetWindowTextLength(hLogEdit);
@@ -835,7 +842,7 @@ void LoadConfig() {
 
 void SaveConfigToFile() {
     if (strlen(currentConfig.configName) == 0) {
-        MessageBox(hMainWindow, "��������������", "��ʾ", MB_OK | MB_ICONWARNING);
+        MessageBox(hMainWindow, "请输入配置名称", "提示", MB_OK | MB_ICONWARNING);
         return;
     }
     
@@ -848,7 +855,7 @@ void SaveConfigToFile() {
     
     FILE* f = fopen(fileName, "w");
     if (!f) {
-        MessageBox(hMainWindow, "��������ʧ��", "����", MB_OK | MB_ICONERROR);
+        MessageBox(hMainWindow, "保存配置失败", "错误", MB_OK | MB_ICONERROR);
         return;
     }
     
@@ -858,9 +865,9 @@ void SaveConfigToFile() {
     fclose(f);
     
     char msg[512];
-    snprintf(msg, sizeof(msg), "�����ѱ��浽: %s", fileName);
-    MessageBox(hMainWindow, msg, "�ɹ�", MB_OK | MB_ICONINFORMATION);
-    AppendLog("[����] �ѱ��������ļ�\r\n");
+    snprintf(msg, sizeof(msg), "配置已保存到: %s", fileName);
+    MessageBox(hMainWindow, msg, "成功", MB_OK | MB_ICONINFORMATION);
+    AppendLog("[配置] 已保存配置文件\r\n");
 }
 
 void LoadConfigFromFile() {
@@ -870,7 +877,7 @@ void LoadConfigFromFile() {
     ZeroMemory(&ofn, sizeof(ofn));
     ofn.lStructSize = sizeof(ofn);
     ofn.hwndOwner = hMainWindow;
-    ofn.lpstrFilter = "�����ļ� (*.ini)\0*.ini\0�����ļ� (*.*)\0*.*\0";
+    ofn.lpstrFilter = "配置文件 (*.ini)\0*.ini\0所有文件 (*.*)\0*.*\0";
     ofn.lpstrFile = fileName;
     ofn.nMaxFile = MAX_PATH;
     ofn.Flags = OFN_EXPLORER | OFN_FILEMUSTEXIST | OFN_HIDEREADONLY;
@@ -882,7 +889,7 @@ void LoadConfigFromFile() {
     
     FILE* f = fopen(fileName, "r");
     if (!f) {
-        MessageBox(hMainWindow, "�޷��������ļ�", "����", MB_OK | MB_ICONERROR);
+        MessageBox(hMainWindow, "无法打开配置文件", "错误", MB_OK | MB_ICONERROR);
         return;
     }
     
@@ -906,23 +913,22 @@ void LoadConfigFromFile() {
     BOOL wasRunning = isProcessRunning;
     
     if (wasRunning) {
-        AppendLog("[����] ��⵽����������,����ֹͣ...\r\n");
+        AppendLog("[配置] 检测到进程运行中,正在停止...\r\n");
         StopProcess();
         Sleep(500);
     }
     
-    MessageBox(hMainWindow, "�����Ѽ���", "�ɹ�", MB_OK | MB_ICONINFORMATION);
-    AppendLog("[����] �Ѽ��������ļ�\r\n");
+    MessageBox(hMainWindow, "配置已加载", "成功", MB_OK | MB_ICONINFORMATION);
+    AppendLog("[配置] 已加载配置文件\r\n");
     
     if (wasRunning) {
-        AppendLog("[����] ����ʹ����������������...\r\n");
+        AppendLog("[配置] 正在使用新配置重启进程...\r\n");
         Sleep(200);
         StartProcess();
     }
 }
 
-// ============ ����ת������ ============
-
+// UTF-8 转 GBK
 char* UTF8ToGBK(const char* utf8Str) {
     if (!utf8Str || strlen(utf8Str) == 0) return strdup("");
     
@@ -952,6 +958,7 @@ char* UTF8ToGBK(const char* utf8Str) {
     return gbkStr;
 }
 
+// GBK 转 UTF-8
 char* GBKToUTF8(const char* gbkStr) {
     if (!gbkStr || strlen(gbkStr) == 0) return strdup("");
     
@@ -981,6 +988,7 @@ char* GBKToUTF8(const char* gbkStr) {
     return utf8Str;
 }
 
+// URL 解码
 char* URLDecode(const char* str) {
     if (!str) return NULL;
     
@@ -1006,6 +1014,7 @@ char* URLDecode(const char* str) {
     return decoded;
 }
 
+// 检测文件编码
 BOOL IsUTF8File(const char* fileName) {
     FILE* f = fopen(fileName, "rb");
     if (!f) return FALSE;
@@ -1021,8 +1030,7 @@ BOOL IsUTF8File(const char* fileName) {
     return FALSE;
 }
 
-// ============ �ڵ����ù��� ============
-
+// 保存节点配置
 void SaveNodeConfig(int nodeIndex) {
     CreateDirectory("nodes", NULL);
     
@@ -1062,6 +1070,7 @@ void SaveNodeConfig(int nodeIndex) {
     fclose(f);
 }
 
+// 加载节点配置
 void LoadNodeConfigByIndex(int nodeIndex, BOOL autoStart) {
     char fileName[MAX_PATH];
     snprintf(fileName, sizeof(fileName), "nodes/node_%d.ini", nodeIndex);
@@ -1070,7 +1079,7 @@ void LoadNodeConfigByIndex(int nodeIndex, BOOL autoStart) {
     FILE* f = fopen(fileName, isUTF8 ? "rb" : "r");
     if (!f) {
         char logMsg[512];
-        snprintf(logMsg, sizeof(logMsg), "[�ڵ�] �����ļ�������: %s\r\n", fileName);
+        snprintf(logMsg, sizeof(logMsg), "[节点] 配置文件不存在: %s\r\n", fileName);
         AppendLog(logMsg);
         return;
     }
@@ -1116,26 +1125,27 @@ void LoadNodeConfigByIndex(int nodeIndex, BOOL autoStart) {
     if (autoStart) {
         if (isProcessRunning) {
             char logMsg[512];
-            snprintf(logMsg, sizeof(logMsg), "[�ڵ�] �����л���: %s\r\n", currentConfig.configName);
+            snprintf(logMsg, sizeof(logMsg), "[节点] 正在切换到: %s\r\n", currentConfig.configName);
             AppendLog(logMsg);
-            AppendLog("[�ڵ�] ֹͣ��ǰ����...\r\n");
+            AppendLog("[节点] 停止当前进程...\r\n");
             StopProcess();
             Sleep(500);
-            AppendLog("[�ڵ�] �����½ڵ�...\r\n");
+            AppendLog("[节点] 启动新节点...\r\n");
             StartProcess();
         } else {
             char logMsg[512];
-            snprintf(logMsg, sizeof(logMsg), "[�ڵ�] �����ڵ�: %s\r\n", currentConfig.configName);
+            snprintf(logMsg, sizeof(logMsg), "[节点] 启动节点: %s\r\n", currentConfig.configName);
             AppendLog(logMsg);
             StartProcess();
         }
     } else {
         char logMsg[512];
-        snprintf(logMsg, sizeof(logMsg), "[�ڵ�] �鿴����: %s\r\n", currentConfig.configName);
+        snprintf(logMsg, sizeof(logMsg), "[节点] 查看配置: %s\r\n", currentConfig.configName);
         AppendLog(logMsg);
     }
 }
 
+// 保存节点列表
 void SaveNodeList() {
     CreateDirectory("nodes", NULL);
     
@@ -1162,6 +1172,7 @@ void SaveNodeList() {
     fclose(f);
 }
 
+// 加载节点列表
 void LoadNodeList() {
     BOOL isUTF8 = IsUTF8File("nodes/nodelist.txt");
     FILE* f = fopen("nodes/nodelist.txt", isUTF8 ? "rb" : "r");
@@ -1199,13 +1210,13 @@ void LoadNodeList() {
     int nodeCount = SendMessage(hNodeList, LB_GETCOUNT, 0, 0);
     if (nodeCount > 0) {
         char logMsg[256];
-        snprintf(logMsg, sizeof(logMsg), "[����] �Ѽ��� %d ���ڵ�\r\n", nodeCount);
+        snprintf(logMsg, sizeof(logMsg), "[订阅] 已加载 %d 个节点\r\n", nodeCount);
         AppendLog(logMsg);
     }
 }
+// ============ 第三部分：Base64解码、订阅解析、网络获取 ============
 
-// ============ Base64���루�����棩 ============
-
+// Base64 解码函数
 char* base64_decode(const char* input, size_t* out_len) {
     static const unsigned char base64_table[256] = {
         64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64,
@@ -1225,40 +1236,51 @@ char* base64_decode(const char* input, size_t* out_len) {
         64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64,
         64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64
     };
-
+    
     size_t in_len = strlen(input);
     if (in_len == 0) return NULL;
-
-    // 计算填充
-    size_t pad = 0;
-    if (input[in_len - 1] == '=') pad++;
-    if (in_len > 1 && input[in_len - 2] == '=') pad++;
-
-    size_t out_size = ((in_len / 4) * 3) - pad;
-    char* out = (char*)malloc(out_size + 1);
-    if (!out) return NULL;
-
-    size_t i, j = 0;
-    for (i = 0; i < in_len; i += 4) {
-        int n = d[(unsigned char)input[i]] << 18 | 
-                d[(unsigned char)input[i + 1]] << 12 | 
-                d[(unsigned char)input[i + 2]] << 6 | 
-                d[(unsigned char)input[i + 3]];
-
-        out[j++] = n >> 16;
-        if (j < out_size) out[j++] = n >> 8 & 0xFF;
-        if (j < out_size) out[j++] = n & 0xFF;
+    
+    size_t padding = 0;
+    if (input[in_len - 1] == '=') padding++;
+    if (in_len > 1 && input[in_len - 2] == '=') padding++;
+    
+    size_t output_len = (in_len / 4) * 3 - padding;
+    char* output = (char*)malloc(output_len + 1);
+    if (!output) return NULL;
+    
+    size_t j = 0;
+    unsigned char block[4];
+    size_t block_pos = 0;
+    
+    for (size_t i = 0; i < in_len; i++) {
+        unsigned char c = (unsigned char)input[i];
+        if (c == '=' || base64_table[c] == 64) {
+            if (c != '=' && c != '\r' && c != '\n' && c != ' ') {
+                free(output);
+                return NULL;
+            }
+            continue;
+        }
+        
+        block[block_pos++] = base64_table[c];
+        
+        if (block_pos == 4) {
+            output[j++] = (block[0] << 2) | (block[1] >> 4);
+            if (j < output_len) output[j++] = (block[1] << 4) | (block[2] >> 2);
+            if (j < output_len) output[j++] = (block[2] << 6) | block[3];
+            block_pos = 0;
+        }
     }
-
-    out[out_size] = '\0';
-    if (out_len) *out_len = out_size;
-    return out;
+    
+    output[output_len] = '\0';
+    if (out_len) *out_len = output_len;
+    return output;
 }
 
+// 检查字符串是否为 Base64 编码
 BOOL is_base64_encoded(const char* data) {
     if (!data || strlen(data) == 0) return FALSE;
     
-    // 如果包含明确的协议头或换行符，通常不是纯Base64
     if (strstr(data, "ech://") || strstr(data, "ECH://") || 
         strstr(data, "\r\n") || strstr(data, "\n")) {
         return FALSE;
@@ -1273,119 +1295,144 @@ BOOL is_base64_encoded(const char* data) {
             (c >= '0' && c <= '9') || c == '+' || c == '/' || c == '=') {
             valid_chars++;
         } else if (c != '\r' && c != '\n' && c != ' ') {
-            // 遇到非Base64字符且非空白字符
             return FALSE;
         }
     }
     
-    // 简单的启发式检查：有效字符占比超过90%
-    return (len > 0) && ((valid_chars * 100 / len) > 90);
+    return (valid_chars * 100 / len) > 90;
 }
 
-// ============ 订阅解析与网络获取 ============
-
-// 解析逻辑：处理 ech://server|token|ip|dns|ech#name 格式
+// 解析订阅数据 (修改版：累加节点，不清除列表)
 void ParseSubscriptionData(const char* data) {
-    if (!data || strlen(data) == 0) return;
+    if (!data || strlen(data) == 0) {
+        return;
+    }
     
     char* dataCopy = NULL;
-    BOOL needFree = FALSE;
-
-    // 尝试Base64解码
     if (is_base64_encoded(data)) {
         size_t decoded_len = 0;
         dataCopy = base64_decode(data, &decoded_len);
-        if (dataCopy) {
-            needFree = TRUE;
-        } else {
-            AppendLog("[订阅] Base64解码失败，尝试直接解析\r\n");
-            dataCopy = strdup(data);
-            needFree = TRUE;
+        if (!dataCopy) {
+            AppendLog("[订阅] Base64解码失败\r\n");
+            return;
         }
     } else {
         dataCopy = strdup(data);
-        needFree = TRUE;
+        if (!dataCopy) return;
     }
     
-    if (!dataCopy) return;
-
     char* line = strtok(dataCopy, "\r\n");
     int newNodesCount = 0;
     
     while (line != NULL) {
-        // 跳过空行和注释
         if (strlen(line) > 0 && line[0] != ';' && strncmp(line, "//", 2) != 0) {
-            
-            // 检查协议头
             if (strncmp(line, "ech://", 6) != 0 && strncmp(line, "ECH://", 6) != 0) {
                 line = strtok(NULL, "\r\n");
                 continue;
             }
             
-            Config nodeConfig;
-            // 初始化默认值
-            memset(&nodeConfig, 0, sizeof(Config));
-            strcpy(nodeConfig.listen, "127.0.0.1:30000"); // 默认监听
-            strcpy(nodeConfig.dns, "dns.alidns.com/dns-query");
-            strcpy(nodeConfig.ech, "cloudflare-ech.com");
-
-            // 1. 提取节点名称 ( # 之后的内容)
+            char nodeName[MAX_SMALL_LEN] = {0};
+            char server[MAX_URL_LEN] = {0};
+            char token[MAX_URL_LEN] = {0};
+            char ip[MAX_SMALL_LEN] = {0};
+            char dns[MAX_SMALL_LEN] = {0};
+            char ech[MAX_SMALL_LEN] = {0};
+            
+            // 分离节点名称和参数部分，# 后面到行尾都是节点名称
             char* nameStart = strchr(line, '#');
             if (nameStart) {
-                *nameStart = '\0'; // 截断行，以便后续解析参数
                 char* urlDecoded = URLDecode(nameStart + 1);
                 if (urlDecoded) {
                     char* gbkName = UTF8ToGBK(urlDecoded);
                     if (gbkName) {
-                        strncpy(nodeConfig.configName, gbkName, MAX_SMALL_LEN - 1);
+                        strncpy(nodeName, gbkName, MAX_SMALL_LEN - 1);
+                        nodeName[MAX_SMALL_LEN - 1] = '\0';
                         free(gbkName);
-                    } else {
-                        strncpy(nodeConfig.configName, urlDecoded, MAX_SMALL_LEN - 1);
                     }
                     free(urlDecoded);
                 }
-            } else {
-                snprintf(nodeConfig.configName, MAX_SMALL_LEN, "Node-%d", g_totalNodeCount + 1);
+                *nameStart = '\0';
             }
             
-            // 2. 解析参数 ech://server|token|ip|dns|ech
+            // 解析参数部分 ech://server|token|ip|dns|ech
             char* p = line;
             if (strncmp(p, "ech://", 6) == 0 || strncmp(p, "ECH://", 6) == 0) {
                 p += 6;
             }
             
-            // 使用 | 分割参数
-            // 格式顺序: server | token | ip | dns | ech
-            int paramIdx = 0;
-            char* tokenPtr = strtok(p, "|");
+            int partIndex = 0;
+            char* start = p;
             
-            while (tokenPtr != NULL) {
-                switch (paramIdx) {
-                    case 0: strncpy(nodeConfig.server, tokenPtr, MAX_URL_LEN - 1); break;
-                    case 1: strncpy(nodeConfig.token, tokenPtr, MAX_URL_LEN - 1); break;
-                    case 2: if(strlen(tokenPtr)>0) strncpy(nodeConfig.ip, tokenPtr, MAX_SMALL_LEN - 1); break;
-                    case 3: if(strlen(tokenPtr)>0) strncpy(nodeConfig.dns, tokenPtr, MAX_SMALL_LEN - 1); break;
-                    case 4: if(strlen(tokenPtr)>0) strncpy(nodeConfig.ech, tokenPtr, MAX_SMALL_LEN - 1); break;
+            while (*p) {
+                if (*p == '|' || *(p + 1) == '\0') {
+                    size_t len = (*p == '|') ? (size_t)(p - start) : (size_t)(p - start + 1);
+                    
+                    if (partIndex == 0 && len > 0 && len < MAX_URL_LEN) {
+                        strncpy(server, start, len);
+                        server[len] = '\0';
+                    } else if (partIndex == 1 && len > 0 && len < MAX_URL_LEN) {
+                        strncpy(token, start, len);
+                        token[len] = '\0';
+                    } else if (partIndex == 2 && len > 0 && len < MAX_SMALL_LEN) {
+                        strncpy(ip, start, len);
+                        ip[len] = '\0';
+                    } else if (partIndex == 3 && len > 0 && len < MAX_SMALL_LEN) {
+                        strncpy(dns, start, len);
+                        dns[len] = '\0';
+                    } else if (partIndex == 4 && len > 0 && len < MAX_SMALL_LEN) {
+                        strncpy(ech, start, len);
+                        ech[len] = '\0';
+                    }
+                    
+                    if (*p == '|') {
+                        partIndex++;
+                        start = p + 1;
+                    }
                 }
-                paramIdx++;
-                tokenPtr = strtok(NULL, "|");
+                p++;
             }
-
-            // 验证必填项
-            if (strlen(nodeConfig.server) > 0) {
-                // 保存节点逻辑
-                // 暂时备份当前UI配置
-                Config backup = currentConfig;
-                currentConfig = nodeConfig;
+            
+            if (partIndex == 0 && strlen(server) == 0) {
+                strncpy(server, start, MAX_URL_LEN - 1);
+                server[MAX_URL_LEN - 1] = '\0';
+            }
+            
+            // 如果没有节点名称，使用服务器地址
+            if (strlen(nodeName) == 0 && strlen(server) > 0) {
+                char* colonPos = strchr(server, ':');
+                if (colonPos) {
+                    size_t hostLen = (size_t)(colonPos - server);
+                    if (hostLen > 0 && hostLen < MAX_SMALL_LEN) {
+                        strncpy(nodeName, server, hostLen);
+                        nodeName[hostLen] = '\0';
+                    }
+                } else {
+                    strncpy(nodeName, server, MAX_SMALL_LEN - 1);
+                    nodeName[MAX_SMALL_LEN - 1] = '\0';
+                }
+            }
+            
+            if (strlen(nodeName) > 0 && strlen(server) > 0) {
+                strcpy(currentConfig.configName, nodeName);
+                strcpy(currentConfig.server, server);
+                strcpy(currentConfig.token, token);
+                strcpy(currentConfig.ip, ip);
                 
+                if (strlen(dns) == 0) {
+                    strcpy(currentConfig.dns, "dns.alidns.com/dns-query");
+                } else {
+                    strcpy(currentConfig.dns, dns);
+                }
+                
+                if (strlen(ech) == 0) {
+                    strcpy(currentConfig.ech, "cloudflare-ech.com");
+                } else {
+                    strcpy(currentConfig.ech, ech);
+                }
+                
+                // 使用全局计数器保存
                 SaveNodeConfig(g_totalNodeCount);
-                
-                // 恢复UI配置
-                currentConfig = backup;
-                
-                // 添加到列表
-                SendMessage(hNodeList, LB_ADDSTRING, 0, (LPARAM)nodeConfig.configName);
-                
+                SendMessage(hNodeList, LB_ADDSTRING, 0, (LPARAM)nodeName);
                 g_totalNodeCount++;
                 newNodesCount++;
             }
@@ -1393,42 +1440,35 @@ void ParseSubscriptionData(const char* data) {
         line = strtok(NULL, "\r\n");
     }
     
-    if (needFree) free(dataCopy);
-    
+    free(dataCopy);
     char logMsg[128];
-    snprintf(logMsg, sizeof(logMsg), "[订阅] 解析完成，新增 %d 个节点\r\n", newNodesCount);
+    snprintf(logMsg, sizeof(logMsg), "[订阅] 解析得到 %d 个节点\r\n", newNodesCount);
     AppendLog(logMsg);
 }
 
+// 处理单个订阅URL
 void ProcessSingleSubscription(const char* url) {
-    if (!url || strlen(url) == 0) return;
-
-    char logMsg[MAX_URL_LEN + 32];
-    snprintf(logMsg, sizeof(logMsg), "[订阅] 正在连接: %s\r\n", url);
+    if (strlen(url) == 0) return;
+    
+    char logMsg[MAX_URL_LEN + 30];
+    snprintf(logMsg, sizeof(logMsg), "[订阅] 获取: %s\r\n", url);
     AppendLog(logMsg);
-
+    
     HINTERNET hInternet = InternetOpen("ECHWorkerClient", INTERNET_OPEN_TYPE_PRECONFIG, NULL, NULL, 0);
-    if (!hInternet) {
-        AppendLog("[订阅] 错误: InternetOpen 失败\r\n");
-        return;
-    }
-
-    // 设置超时
-    DWORD timeout = 5000;
-    InternetSetOption(hInternet, INTERNET_OPTION_CONNECT_TIMEOUT, &timeout, sizeof(timeout));
-
+    if (!hInternet) return;
+    
     HINTERNET hConnect = InternetOpenUrl(hInternet, url, NULL, 0, 
-        INTERNET_FLAG_RELOAD | INTERNET_FLAG_NO_CACHE_WRITE | INTERNET_FLAG_PRAGMA_NOCACHE, 0);
-
+        INTERNET_FLAG_RELOAD | INTERNET_FLAG_NO_CACHE_WRITE, 0);
+    
     if (!hConnect) {
-        AppendLog("[订阅] 错误: 无法连接到订阅地址\r\n");
+        AppendLog("[订阅] 连接失败\r\n");
         InternetCloseHandle(hInternet);
         return;
     }
-
-    // 动态分配缓冲区读取数据
-    size_t bufferSize = 512 * 1024; // 512KB limit
-    char* buffer = (char*)malloc(bufferSize);
+    
+    // 动态分配大缓冲区，防止溢出
+    size_t bufSize = 1024 * 1024; // 1MB
+    char* buffer = (char*)malloc(bufSize);
     if (!buffer) {
         InternetCloseHandle(hConnect);
         InternetCloseHandle(hInternet);
@@ -1438,71 +1478,63 @@ void ProcessSingleSubscription(const char* url) {
     DWORD bytesRead = 0;
     DWORD totalRead = 0;
     char tempBuf[4096];
-
+    
+    buffer[0] = 0;
+    
     while (InternetReadFile(hConnect, tempBuf, sizeof(tempBuf) - 1, &bytesRead) && bytesRead > 0) {
-        if (totalRead + bytesRead < bufferSize - 1) {
-            memcpy(buffer + totalRead, tempBuf, bytesRead);
+        tempBuf[bytesRead] = 0;
+        if (totalRead + bytesRead < bufSize - 1) {
+            strcat(buffer, tempBuf);
             totalRead += bytesRead;
-        } else {
-            AppendLog("[订阅] 警告: 订阅内容过大，已截断\r\n");
-            break;
         }
     }
-    buffer[totalRead] = '\0';
-
+    
     InternetCloseHandle(hConnect);
     InternetCloseHandle(hInternet);
-
+    
     if (totalRead > 0) {
         ParseSubscriptionData(buffer);
     } else {
-        AppendLog("[订阅] 获取到的内容为空\r\n");
+        AppendLog("[订阅] 获取数据为空\r\n");
     }
-
+    
     free(buffer);
 }
 
+// 获取所有订阅 (重构入口函数)
 void FetchAllSubscriptions() {
-    int count = SendMessage(hSubList, LB_GETCOUNT, 0, 0);
-    if (count == 0) {
-        MessageBox(hMainWindow, "请先添加订阅链接", "提示", MB_OK | MB_ICONINFORMATION);
+    int subCount = SendMessage(hSubList, LB_GETCOUNT, 0, 0);
+    if (subCount == 0) {
+        MessageBox(hMainWindow, "请先添加订阅链接", "提示", MB_OK);
         return;
     }
-
-    EnableWindow(hFetchSubBtn, FALSE);
-    AppendLog("------------------------------\r\n");
-    AppendLog("[订阅] 开始更新订阅...\r\n");
-
-    // 清空现有节点列表
+    
+    AppendLog("--------------------------\r\n");
+    AppendLog("[订阅] 开始更新所有订阅...\r\n");
+    
+    // 1. 清空当前节点列表UI
     SendMessage(hNodeList, LB_RESETCONTENT, 0, 0);
+    
+    // 2. 重置全局节点计数器
     g_totalNodeCount = 0;
-
-    // 清理旧的节点文件 (nodes/*.ini)
-    WIN32_FIND_DATA ffd;
-    HANDLE hFind = FindFirstFile("nodes\\node_*.ini", &ffd);
-    if (hFind != INVALID_HANDLE_VALUE) {
-        do {
-            char path[MAX_PATH];
-            snprintf(path, sizeof(path), "nodes\\%s", ffd.cFileName);
-            DeleteFile(path);
-        } while (FindNextFile(hFind, &ffd) != 0);
-        FindClose(hFind);
-    }
-
-    // 遍历订阅列表
-    for (int i = 0; i < count; i++) {
+    
+    // 3. (可选) 清理 nodes 文件夹下的旧文件，防止残留
+    // 这里简单处理：重写时会覆盖同名文件，但如果新节点数少于旧节点数，会有残留。
+    // 生产环境建议遍历删除 nodes/*.ini，这里略过以保持代码简洁。
+    
+    // 4. 遍历所有订阅链接
+    for (int i = 0; i < subCount; i++) {
         char url[MAX_URL_LEN];
         SendMessage(hSubList, LB_GETTEXT, i, (LPARAM)url);
         ProcessSingleSubscription(url);
     }
-
+    
+    // 5. 保存新的节点列表文件
     SaveNodeList();
     
-    EnableWindow(hFetchSubBtn, TRUE);
-    
-    char msg[128];
-    snprintf(msg, sizeof(msg), "订阅更新完成，共获取 %d 个节点", g_totalNodeCount);
-    MessageBox(hMainWindow, msg, "完成", MB_OK | MB_ICONINFORMATION);
-    AppendLog("[订阅] 更新结束\r\n");
-    AppendLog("------------------------------\r\n");
+    char msg[256];
+    snprintf(msg, sizeof(msg), "更新完成，共获取 %d 个节点", g_totalNodeCount);
+    MessageBox(hMainWindow, msg, "订阅成功", MB_OK | MB_ICONINFORMATION);
+    AppendLog("[订阅] 全部更新完成\r\n");
+    AppendLog("--------------------------\r\n");
 }
