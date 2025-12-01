@@ -13,7 +13,7 @@
 
 typedef BOOL (WINAPI *SetProcessDPIAwareFunc)(void);
 
-#define APP_VERSION "1.2" // 版本号升级
+#define APP_VERSION "1.5" // 版本号升级
 #define APP_TITLE "ECH workers 客户端 v" APP_VERSION
 
 #define MAX_URL_LEN 8192
@@ -177,8 +177,8 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
     if (!RegisterClass(&wc)) return 1;
 
     // 稍微增加窗口高度以容纳新控件
-    int winWidth = Scale(900);
-    int winHeight = Scale(800); 
+    int winWidth = Scale(1000);
+    int winHeight = Scale(750); 
     int screenW = GetSystemMetrics(SM_CXSCREEN);
     int screenH = GetSystemMetrics(SM_CYSCREEN);
 
@@ -416,9 +416,9 @@ void CreateControls(HWND hwnd) {
     int winW = rect.right;
     int margin = Scale(20);
     int groupW = winW - (margin * 2);
-    int lineHeight = Scale(26);
+    int lineHeight = Scale(22);
     int lineGap = Scale(10);
-    int editH = Scale(22);
+    int editH = Scale(20);
     int curY = margin;
 
     // ----- 订阅管理区域重构 -----
@@ -472,7 +472,7 @@ void CreateControls(HWND hwnd) {
     SendMessage(hNodeList, WM_SETFONT, (WPARAM)hFontUI, TRUE);
 
     curY += groupSubH + Scale(15);
-    int group1H = Scale(110);
+    int group1H = Scale(100);
     HWND hGroup1 = CreateWindow("BUTTON", "核心配置", WS_VISIBLE | WS_CHILD | BS_GROUPBOX,
         margin, curY, groupW, group1H, hwnd, NULL, NULL, NULL);
     SendMessage(hGroup1, WM_SETFONT, (WPARAM)hFontUI, TRUE);
@@ -550,7 +550,7 @@ void CreateControls(HWND hwnd) {
 
     hLogEdit = CreateWindow("EDIT", "", 
         WS_VISIBLE | WS_CHILD | WS_BORDER | WS_VSCROLL | ES_MULTILINE | ES_READONLY, 
-        margin, curY, winW - (margin * 2), Scale(80), hwnd, (HMENU)ID_LOG_EDIT, NULL, NULL);
+        margin, curY, winW - (margin * 2), Scale(60), hwnd, (HMENU)ID_LOG_EDIT, NULL, NULL);
     SendMessage(hLogEdit, WM_SETFONT, (WPARAM)hFontLog, TRUE);
     SendMessage(hLogEdit, EM_SETLIMITTEXT, 0, 0);
 }
