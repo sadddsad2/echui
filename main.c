@@ -488,10 +488,10 @@ void CreateControls(HWND hwnd) {
     SendMessage(hConfigNameEdit, EM_SETLIMITTEXT, MAX_SMALL_LEN, 0);
 
     innerY += lineHeight + lineGap;
-    CreateLabelAndEdit(hwnd, "服务地址:", margin + Scale(15), innerY, groupW - Scale(30), editH, ID_SERVER_EDIT, &hServerEdit, FALSE);
+    CreateLabelAndEdit(hwnd, "服务地址:", margin + Scale(15), innerY, halfGroupW - Scale(30), editH, ID_SERVER_EDIT, &hServerEdit, FALSE); // 新
     innerY += lineHeight + lineGap;
 
-    CreateLabelAndEdit(hwnd, "监听地址:", margin + Scale(15), innerY, groupW - Scale(30), editH, ID_LISTEN_EDIT, &hListenEdit, FALSE);
+    CreateLabelAndEdit(hwnd, "监听地址:", margin + Scale(15), innerY, halfGroupW - Scale(30), editH, ID_LISTEN_EDIT, &hListenEdit, FALSE); // 新
 
     curY += group1H + Scale(15);
 
@@ -499,19 +499,16 @@ void CreateControls(HWND hwnd) {
     HWND hGroup2 = CreateWindow("BUTTON", "高级选项 (可选)", WS_VISIBLE | WS_CHILD | BS_GROUPBOX,
         margin, curY, groupW, group2H, hwnd, NULL, NULL, NULL);
     SendMessage(hGroup2, WM_SETFONT, (WPARAM)hFontUI, TRUE);
-    innerY = curY + Scale(25);
-
-    CreateLabelAndEdit(hwnd, "身份令牌:", margin + Scale(15), innerY, groupW - Scale(30), editH, ID_TOKEN_EDIT, &hTokenEdit, FALSE);
+    innerY = (curY - group2H - Scale(15)) + Scale(25); // 重新计算右侧分组的起始 Y 坐标
+    CreateLabelAndEdit(hwnd, "身份令牌:", margin + halfGroupW + splitGap + Scale(15), innerY, halfGroupW - Scale(30), editH, ID_TOKEN_EDIT, &hTokenEdit, FALSE); // 新
     innerY += lineHeight + lineGap;
 
-    CreateLabelAndEdit(hwnd, "优选IP(域名):", margin + Scale(15), innerY, groupW - Scale(30), editH, ID_IP_EDIT, &hIpEdit, FALSE);
+    CreateLabelAndEdit(hwnd, "优选IP(域名):", margin + halfGroupW + splitGap + Scale(15), innerY, halfGroupW - Scale(30), editH, ID_IP_EDIT, &hIpEdit, FALSE); // 新
     innerY += lineHeight + lineGap;
 
-    CreateLabelAndEdit(hwnd, "ECH域名:", margin + Scale(15), innerY, groupW - Scale(30), editH, ID_ECH_EDIT, &hEchEdit, FALSE);
+    CreateLabelAndEdit(hwnd, "ECH域名:", margin + halfGroupW + splitGap + Scale(15), innerY, halfGroupW - Scale(30), editH, ID_ECH_EDIT, &hEchEdit, FALSE); // 新
     innerY += lineHeight + lineGap;
-
-    CreateLabelAndEdit(hwnd, "DNS服务器(仅域名):", margin + Scale(15), innerY, groupW - Scale(30), editH, ID_DNS_EDIT, &hDnsEdit, FALSE);
-
+    CreateLabelAndEdit(hwnd, "DNS服务器(仅域名):", margin + halfGroupW + splitGap + Scale(15), innerY, halfGroupW - Scale(30), editH, ID_DNS_EDIT, &hDnsEdit, FALSE); // 新
     curY += group2H + Scale(15);
 
     int btnW = Scale(120);
@@ -550,7 +547,7 @@ void CreateControls(HWND hwnd) {
 
     hLogEdit = CreateWindow("EDIT", "", 
         WS_VISIBLE | WS_CHILD | WS_BORDER | WS_VSCROLL | ES_MULTILINE | ES_READONLY, 
-        margin, curY, winW - (margin * 2), Scale(60), hwnd, (HMENU)ID_LOG_EDIT, NULL, NULL);
+        margin, curY, winW - (margin * 2), Scale(80), hwnd, (HMENU)ID_LOG_EDIT, NULL, NULL);
     SendMessage(hLogEdit, WM_SETFONT, (WPARAM)hFontLog, TRUE);
     SendMessage(hLogEdit, EM_SETLIMITTEXT, 0, 0);
 }
@@ -929,29 +926,33 @@ void LoadConfigFromFile() {
 }
 
 // UTF-8 转 GBK
+// UTF-8 转 GBK (改进版：处理转换失败和不可映射字符)
 char* UTF8ToGBK(const char* utf8Str) {
     if (!utf8Str || strlen(utf8Str) == 0) return strdup("");
     
+    // 1. 计算 WideChar 长度
     int wideLen = MultiByteToWideChar(CP_UTF8, 0, utf8Str, -1, NULL, 0);
-    if (wideLen == 0) return strdup(utf8Str);
+    if (wideLen == 0) return strdup("UTF8DecodeError"); // 避免返回原始UTF-8
     
     wchar_t* wideStr = (wchar_t*)malloc(wideLen * sizeof(wchar_t));
-    if (!wideStr) return strdup(utf8Str);
+    if (!wideStr) return strdup("MemoryError");
     
+    // 2. 转换为 WideChar
     MultiByteToWideChar(CP_UTF8, 0, utf8Str, -1, wideStr, wideLen);
-    
     int gbkLen = WideCharToMultiByte(CP_ACP, 0, wideStr, -1, NULL, 0, NULL, NULL);
+    
     if (gbkLen == 0) {
         free(wideStr);
-        return strdup(utf8Str);
+        return strdup("GBKEncodeError");
     }
     
     char* gbkStr = (char*)malloc(gbkLen);
     if (!gbkStr) {
         free(wideStr);
-        return strdup(utf8Str);
+        return strdup("MemoryError");
     }
     
+    // 4. 转换为 GBK，确保使用默认字符代替无法映射的 WideChar。
     WideCharToMultiByte(CP_ACP, 0, wideStr, -1, gbkStr, gbkLen, NULL, NULL);
     free(wideStr);
     
