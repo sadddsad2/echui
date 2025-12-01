@@ -421,8 +421,8 @@ void CreateControls(HWND hwnd) {
     int editH = Scale(20);
     int curY = margin;
 
-    // ----- 订阅管理区域重构 -----
-    int groupSubH = Scale(280); // 增加高度以容纳列表
+    // ----- 订阅管理区域 (保持不变) -----
+    int groupSubH = Scale(280); 
     HWND hGroupSub = CreateWindow("BUTTON", "订阅管理", WS_VISIBLE | WS_CHILD | BS_GROUPBOX,
         margin, curY, groupW, groupSubH, hwnd, NULL, NULL, NULL);
     SendMessage(hGroupSub, WM_SETFONT, (WPARAM)hFontUI, TRUE);
@@ -474,12 +474,21 @@ void CreateControls(HWND hwnd) {
     curY += groupSubH + Scale(15);
     int splitGap = Scale(15);
     int halfGroupW = (groupW - splitGap) / 2;
-    int group1H = Scale(110);
-    HWND hGroup1 = CreateWindow("BUTTON", "核心配置", WS_VISIBLE | WS_CHILD | BS_GROUPBOX,
+    
+    // [MODIFIED] Group Box 1: 高度调整以容纳所有 7 项配置，标题改为 "配置"
+    // 标题(25) + 4 * (行高(22) + 间距(10)) + 底部留白(5) = 25 + 4*32 + 5 = 158
+    // 由于右侧有 4 行，左侧有 3 行，我们需要足够的空间容纳 4 行。
+    int group1H = Scale(165); // 调整高度以适配 4 行控件，消除空白
+    
+    // [MODIFIED] Group Box 1: 标题修改为 "配置"
+    HWND hGroup1 = CreateWindow("BUTTON", "配置", WS_VISIBLE | WS_CHILD | BS_GROUPBOX,
         margin, curY, groupW, group1H, hwnd, NULL, NULL, NULL);
     SendMessage(hGroup1, WM_SETFONT, (WPARAM)hFontUI, TRUE);
     
+    // 初始化 Group Box 1 内部 Y 坐标
     innerY = curY + Scale(25);
+    
+    // --- Group Box 1: 左侧 3 项 (核心配置) ---
     HWND hConfigLabel = CreateWindow("STATIC", "配置名称:", WS_VISIBLE | WS_CHILD | SS_LEFT, 
         margin + Scale(15), innerY + Scale(3), Scale(80), Scale(20), hwnd, NULL, NULL, NULL);
     SendMessage(hConfigLabel, WM_SETFONT, (WPARAM)hFontUI, TRUE);
@@ -490,34 +499,37 @@ void CreateControls(HWND hwnd) {
     SendMessage(hConfigNameEdit, EM_SETLIMITTEXT, MAX_SMALL_LEN, 0);
 
     innerY += lineHeight + lineGap;
-    CreateLabelAndEdit(hwnd, "服务地址:", margin + Scale(15), innerY, halfGroupW - Scale(30), editH, ID_SERVER_EDIT, &hServerEdit, FALSE); // 新
+    CreateLabelAndEdit(hwnd, "服务地址:", margin + Scale(15), innerY, halfGroupW - Scale(30), editH, ID_SERVER_EDIT, &hServerEdit, FALSE);
     innerY += lineHeight + lineGap;
 
-    CreateLabelAndEdit(hwnd, "监听地址:", margin + Scale(15), innerY, halfGroupW - Scale(30), editH, ID_LISTEN_EDIT, &hListenEdit, FALSE); // 新
+    CreateLabelAndEdit(hwnd, "监听地址:", margin + Scale(15), innerY, halfGroupW - Scale(30), editH, ID_LISTEN_EDIT, &hListenEdit, FALSE);
 
-    curY += group1H + Scale(15);
+    // --- Group Box 1: 右侧 4 项 (原高级选项)，紧接着左侧第一个控件的 Y 坐标开始 ---
+    
+    // [MODIFIED] 右侧控件的起始 Y 坐标，与左侧的 "配置名称" 对齐
+    int innerY_Right = curY + Scale(25); 
+    int rightX = margin + halfGroupW + splitGap;
 
-    int group2H = Scale(155);
-    HWND hGroup2 = CreateWindow("BUTTON", "高级选项 (可选)", WS_VISIBLE | WS_CHILD | BS_GROUPBOX,
-        margin, curY, groupW, group2H, hwnd, NULL, NULL, NULL);
-    SendMessage(hGroup2, WM_SETFONT, (WPARAM)hFontUI, TRUE);
-    curY += max(group1H, group2H) + Scale(15);
-    CreateLabelAndEdit(hwnd, "身份令牌:", margin + halfGroupW + splitGap + Scale(15), innerY, halfGroupW - Scale(30), editH, ID_TOKEN_EDIT, &hTokenEdit, FALSE); // 新
-    innerY += lineHeight + lineGap;
+    CreateLabelAndEdit(hwnd, "身份令牌:", rightX + Scale(15), innerY_Right, halfGroupW - Scale(30), editH, ID_TOKEN_EDIT, &hTokenEdit, FALSE);
+    innerY_Right += lineHeight + lineGap;
 
-    CreateLabelAndEdit(hwnd, "优选IP(域名):", margin + halfGroupW + splitGap + Scale(15), innerY, halfGroupW - Scale(30), editH, ID_IP_EDIT, &hIpEdit, FALSE); // 新
-    innerY += lineHeight + lineGap;
+    CreateLabelAndEdit(hwnd, "优选IP(域名):", rightX + Scale(15), innerY_Right, halfGroupW - Scale(30), editH, ID_IP_EDIT, &hIpEdit, FALSE);
+    innerY_Right += lineHeight + lineGap;
 
-    CreateLabelAndEdit(hwnd, "ECH域名:", margin + halfGroupW + splitGap + Scale(15), innerY, halfGroupW - Scale(30), editH, ID_ECH_EDIT, &hEchEdit, FALSE); // 新
-    innerY += lineHeight + lineGap;
-    CreateLabelAndEdit(hwnd, "DNS服务器(仅域名):", margin + halfGroupW + splitGap + Scale(15), innerY, halfGroupW - Scale(30), editH, ID_DNS_EDIT, &hDnsEdit, FALSE); // 新
-    curY += group2H + Scale(15);
+    CreateLabelAndEdit(hwnd, "ECH域名:", rightX + Scale(15), innerY_Right, halfGroupW - Scale(30), editH, ID_ECH_EDIT, &hEchEdit, FALSE);
+    innerY_Right += lineHeight + lineGap;
+    
+    CreateLabelAndEdit(hwnd, "DNS服务器(仅域名):", rightX + Scale(15), innerY_Right, halfGroupW - Scale(30), editH, ID_DNS_EDIT, &hDnsEdit, FALSE);
+    
+    // [MODIFIED] 移除 Group Box 2 的创建代码，并使用 Group Box 1 的新高度更新下一个区域 (按钮区) 的 Y 坐标
+    curY += group1H + Scale(15); 
 
     int btnW = Scale(120);
     int btnH = Scale(38);
     int btnGap = Scale(20);
     int startX = margin;
 
+    // --- 按钮行 (保持不变) ---
     hStartBtn = CreateWindow("BUTTON", "启动代理", WS_VISIBLE | WS_CHILD | BS_DEFPUSHBUTTON,
         startX, curY, btnW, btnH, hwnd, (HMENU)ID_START_BTN, NULL, NULL);
     SendMessage(hStartBtn, WM_SETFONT, (WPARAM)hFontUI, TRUE);
@@ -541,6 +553,7 @@ void CreateControls(HWND hwnd) {
 
     curY += btnH + Scale(15);
 
+    // --- 日志区域 (保持不变) ---
     HWND hLogLabel = CreateWindow("STATIC", "运行日志:", WS_VISIBLE | WS_CHILD, 
         margin, curY, Scale(100), Scale(20), hwnd, NULL, NULL, NULL);
     SendMessage(hLogLabel, WM_SETFONT, (WPARAM)hFontUI, TRUE);
@@ -553,7 +566,6 @@ void CreateControls(HWND hwnd) {
     SendMessage(hLogEdit, WM_SETFONT, (WPARAM)hFontLog, TRUE);
     SendMessage(hLogEdit, EM_SETLIMITTEXT, 0, 0);
 }
-
 // ============ 订阅列表文件管理 ============
 
 void SaveSubscriptionList() {
