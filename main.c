@@ -178,7 +178,7 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
 
     // 稍微增加窗口高度以容纳新控件
     int winWidth = Scale(1200);
-    int winHeight = Scale(700); 
+    int winHeight = Scale(750); 
     int screenW = GetSystemMetrics(SM_CXSCREEN);
     int screenH = GetSystemMetrics(SM_CYSCREEN);
 
