@@ -185,7 +185,7 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
     // [Modified] Use WS_OVERLAPPEDWINDOW to allow resizing and maximizing
     DWORD winStyle = WS_OVERLAPPEDWINDOW | WS_CLIPCHILDREN;
 
-    DWORD winStyle = WS_OVERLAPPED | WS_CAPTION | WS_SYSMENU | WS_MINIMIZEBOX | WS_CLIPCHILDREN;
+     // DWORD winStyle = WS_OVERLAPPED | WS_CAPTION | WS_SYSMENU | WS_MINIMIZEBOX | WS_CLIPCHILDREN;
 
     hMainWindow = CreateWindowEx(
         0, "ECHWorkerClient", APP_TITLE, 
