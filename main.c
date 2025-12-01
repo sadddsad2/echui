@@ -1,6 +1,8 @@
 #pragma comment(linker,"\"/manifestdependency:type='win32' name='Microsoft.Windows.Common-Controls' version='6.0.0.0' processorArchitecture='*' publicKeyToken='6595b64144ccf1df' language='*'\"")
 #pragma comment(lib, "comctl32.lib")
 #pragma comment(lib, "wininet.lib")
+#pragma comment(lib, "Advapi32.lib") // 用于 CryptStringToBinary
+#pragma comment(lib, "crypt32.lib")  // 用于 CryptStringToBinary
 
 #include <windows.h>
 #include <commctrl.h>
@@ -10,18 +12,22 @@
 #include <stdlib.h>
 #include <string.h>
 #include <shlwapi.h> // For PathCombine
+#include <wincrypt.h> // 用于 CryptStringToBinary
+#include <shlobj.h>   // For SHCreateDirectoryEx
+#include <ctype.h>    // For isspace, isalnum
 
 #define SINGLE_INSTANCE_MUTEX_NAME "ECHWorkerClient_Mutex_Unique_ID"
 #define IDI_APP_ICON 101 // 假设您的资源文件中有此ID
 
 typedef BOOL (WINAPI *SetProcessDPIAwareFunc)(void);
 
-#define APP_VERSION "1.5"
+#define APP_VERSION "1.2"
 #define APP_TITLE "ECH workers 客户端 v" APP_VERSION
 
 #define MAX_URL_LEN 8192
 #define MAX_SMALL_LEN 2048
 #define MAX_CMD_LEN 32768
+#define MAX_NODES 512 // 节点列表最大容量
 
 #define WM_TRAYICON (WM_USER + 1)
 #define WM_APPEND_LOG (WM_USER + 2) 
@@ -92,6 +98,14 @@ Config currentConfig = {
     "默认配置", "dns.alidns.com/dns-query", "cloudflare-ech.com", "example.com:443", "", "127.0.0.1:30000", ""
 };
 
+typedef struct {
+    char name[MAX_SMALL_LEN];
+    char server[MAX_URL_LEN];
+} NodeConfig;
+
+NodeConfig g_nodes[MAX_NODES]; // 全局节点数组
+
+
 // --- Function Prototypes ---
 LRESULT CALLBACK WindowProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam);
 void CreateControls(HWND hwnd);
@@ -119,15 +133,16 @@ void SaveSubscriptionList();
 void LoadSubscriptionList();
 void SaveNodeConfig(int nodeIndex);
 void LoadNodeList();
-void SaveNodeList();
+void SaveNodeList(); // 占位函数
 void LoadNodeConfigByIndex(int nodeIndex, BOOL autoStart);
 void ClearNodeList();
 char* UTF8ToGBK(const char* utf8Str);
 char* GBKToUTF8(const char* gbkStr);
 char* URLDecode(const char* str);
 BOOL IsUTF8File(const char* fileName);
-char* base64_decode(const char* input, size_t* out_len);
+char* base64_decode(const char* input, size_t* out_len); 
 BOOL is_base64_encoded(const char* data);
+void ProcessNodeUrl(const char* nodeUrl);
 
 // --- WinMain ---
 
@@ -184,14 +199,12 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
 
     if (!RegisterClass(&wc)) return 1;
 
-    // 修改：设置初始窗口大小为 800x700，并添加可调节大小样式
+    // 修改：设置初始窗口大小为 800x700
     int winWidth = Scale(800);
     int winHeight = Scale(700); 
     int screenW = GetSystemMetrics(SM_CXSCREEN);
     int screenH = GetSystemMetrics(SM_CYSCREEN);
 
-    // WS_OVERLAPPEDWINDOW 包含 WS_CAPTION, WS_SYSMENU, WS_MINIMIZEBOX, WS_MAXIMIZEBOX, 和 WS_THICKFRAME（可调节大小）
-    // WS_CLIPCHILDREN 避免子控件重绘闪烁
     DWORD winStyle = WS_OVERLAPPEDWINDOW | WS_CLIPCHILDREN; 
 
     hMainWindow = CreateWindowEx(
@@ -237,7 +250,7 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam) 
 
         case WM_SIZE:
         {
-            // --- 动态布局逻辑 (根据 800x700 比例和 DPI 缩放) ---
+            // --- 动态布局逻辑 ---
             
             int margin = Scale(20);
             int lineHeight = Scale(30);
@@ -288,10 +301,6 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam) 
                 margin + Scale(285), innerY, Scale(120), Scale(30), TRUE);
             
             innerY += Scale(35);
-
-            // Node List Label
-            // GetDlgItem(hwnd, ID_NODE_LIST - 1) is the label for Node List
-            // Note: The label is a static control created before the listbox.
 
             // Config Name Label Start Y (Unscaled value 315)
             int configNameLabelY = Scale(315); 
@@ -350,10 +359,9 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam) 
             // DNS Edit (hDnsEdit)
             MoveWindow(hDnsEdit, margin + labelW, innerY_Config, editW_Config, editH, TRUE);
                 
-            // Find the Y position for the button row, relative to the window bottom, 
-            // or relative to the start of the log area.
-            int logLabelY = newHeight - Scale(170); // Log Label Y, fixed relative to bottom
-            int buttonRowY = logLabelY - Scale(38) - Scale(15); // Button Row Y
+            // Find the Y position for the button row, relative to the window bottom
+            int logLabelY = newHeight - Scale(170); 
+            int buttonRowY = logLabelY - Scale(38) - Scale(15); 
             
             // --- 3. 按钮行 ---
             
@@ -373,12 +381,12 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam) 
             // --- 4. 日志区域 (Bottom Section) ---
             
             // Log Label
-            MoveWindow(GetDlgItem(hwnd, ID_LOG_EDIT - 1), // Log Label is before hLogEdit
+            MoveWindow(GetDlgItem(hwnd, ID_LOG_EDIT - 1), 
                 margin, logLabelY, Scale(100), Scale(20), TRUE); 
 
             // Log Edit Y: Log Label Y + Label Height + Gap
             int logEditY = logLabelY + Scale(25); 
-            // 日志框高度: 从 Log Edit Y 到窗口底部的距离, 减去底部边距
+            // 日志框高度
             int logHeight = newHeight - logEditY - margin;
             if (logHeight < Scale(30)) logHeight = Scale(30); 
 
@@ -472,12 +480,6 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam) 
                         int index = SendMessage(hNodeList, LB_GETCURSEL, 0, 0);
                         if (index != LB_ERR) {
                             LoadNodeConfigByIndex(index, TRUE);
-                            // 自动启动
-                            if (!isProcessRunning) {
-                                StartProcess();
-                            } else {
-                                AppendLog("[提示] 代理已运行，配置已更新。\r\n");
-                            }
                         }
                     }
                     break;
@@ -641,8 +643,7 @@ void CreateControls(HWND hwnd) {
 
     CreateLabelAndEdit(hwnd, "DNS服务器(仅域名):", margin + Scale(15), innerY_Config, groupW - Scale(30), editH, ID_DNS_EDIT, &hDnsEdit, FALSE);
 
-    // 按钮和日志区域的初始位置将由 WM_SIZE 消息在窗口创建完成后第一次调整。
-    // 这里仅创建控件。
+    // 按钮和日志区域的初始位置
     int btnW = Scale(120);
     int btnH = Scale(38);
     int btnGap = Scale(20);
@@ -695,6 +696,7 @@ void StartProcess() {
     }
 
     GetControlValues();
+    SaveConfig(); // 保存当前配置到默认 config.ini
 
     char cmdLine[MAX_CMD_LEN];
     // 假设可执行文件名为 ech-worker-client.exe
@@ -740,7 +742,7 @@ void StartProcess() {
 
     // 启动子进程
     if (!CreateProcess(NULL, cmdLine, NULL, NULL, TRUE, 0, NULL, NULL, &si, &processInfo)) {
-        AppendLog("[错误] 启动进程失败。错误码: ");
+        AppendLog("[错误] 启动进程失败。请检查 ech-worker-client.exe 是否存在于当前目录。错误码: ");
         char errBuf[256];
         sprintf(errBuf, "%lu\r\n", GetLastError());
         AppendLog(errBuf);
@@ -782,7 +784,7 @@ void StopProcess() {
     // 关闭句柄和线程
     if (hLogThread) {
         // 由于日志线程可能正在 ReadFile 阻塞，强制关闭管道使其退出
-        CloseHandle(hLogPipe); 
+        if (hLogPipe) CloseHandle(hLogPipe); 
         hLogPipe = NULL;
         WaitForSingleObject(hLogThread, 1000); 
         CloseHandle(hLogThread);
@@ -821,8 +823,8 @@ DWORD WINAPI LogReaderThread(LPVOID lpParam) {
     // 如果进程仍在运行，但管道断开，则说明进程可能已异常退出
     if (isProcessRunning) {
         AppendLog("[错误] 日志读取管道断开。代理可能已异常退出。\r\n");
-        isProcessRunning = FALSE; // 更新状态
-        PostMessage(hMainWindow, WM_COMMAND, ID_STOP_BTN, 0); // 触发停止流程以更新UI
+        // 确保在主线程中执行 StopProcess
+        PostMessage(hMainWindow, WM_COMMAND, ID_STOP_BTN, 0); 
     }
 
     return 0;
@@ -890,111 +892,163 @@ void SetControlValues() {
 }
 
 void SaveConfigToFile() {
-    GetControlValues();
-    char fileName[MAX_PATH];
-    char configNameGBK[MAX_SMALL_LEN];
-    char appPath[MAX_PATH];
-    
-    GetModuleFileName(NULL, appPath, MAX_PATH);
-    PathRemoveFileSpec(appPath);
-    
-    // 创建 config 目录
-    char configDir[MAX_PATH];
-    PathCombine(configDir, appPath, "config");
-    CreateDirectory(configDir, NULL);
+    GetControlValues(); 
 
-    char *gbkName = UTF8ToGBK(currentConfig.configName);
-    if (!gbkName) {
-        AppendLog("[错误] 配置名称编码转换失败。\r\n");
+    if (strlen(currentConfig.configName) == 0) {
+        MessageBox(hMainWindow, "请输入配置名称", "提示", MB_OK | MB_ICONWARNING);
         return;
     }
-    _snprintf(configNameGBK, MAX_SMALL_LEN, "%s.ini", gbkName);
-    free(gbkName);
+    
+    char safeName[240];
+    strncpy(safeName, currentConfig.configName, sizeof(safeName) - 1);
+    safeName[sizeof(safeName) - 1] = '\0';
+    
+    // 替换文件名中的非法字符
+    for (int i = 0; safeName[i] != '\0'; i++) {
+        if (safeName[i] == '/' || safeName[i] == '\\' || safeName[i] == ':' || 
+            safeName[i] == '*' || safeName[i] == '?' || safeName[i] == '"' || 
+            safeName[i] == '<' || safeName[i] == '>' || safeName[i] == '|') {
+            safeName[i] = '_';
+        }
+    }
+    
+    char fileName[MAX_PATH];
+    snprintf(fileName, sizeof(fileName), "%s.ini", safeName);
+    
+    OPENFILENAME ofn;
+    char szFile[MAX_PATH];
+    snprintf(szFile, sizeof(szFile), "%s", fileName);
 
-    PathCombine(fileName, configDir, configNameGBK);
+    ZeroMemory(&ofn, sizeof(ofn));
+    ofn.lStructSize = sizeof(ofn);
+    ofn.hwndOwner = hMainWindow;
+    ofn.lpstrFile = szFile;
+    ofn.nMaxFile = sizeof(szFile);
+    ofn.lpstrFilter = "配置(*.ini)\0*.ini\0";
+    ofn.nFilterIndex = 1;
+    ofn.lpstrDefExt = "ini";
+    ofn.Flags = OFN_OVERWRITEPROMPT | OFN_HIDEREADONLY;
 
-    if (WritePrivateProfileString("Config", "ConfigName", currentConfig.configName, fileName) &&
-        WritePrivateProfileString("Config", "Server", currentConfig.server, fileName) &&
-        WritePrivateProfileString("Config", "Listen", currentConfig.listen, fileName) &&
-        WritePrivateProfileString("Config", "Token", currentConfig.token, fileName) &&
-        WritePrivateProfileString("Config", "IP", currentConfig.ip, fileName) &&
-        WritePrivateProfileString("Config", "DNS", currentConfig.dns, fileName) &&
-        WritePrivateProfileString("Config", "ECH", currentConfig.ech, fileName))
-    {
-        AppendLog("[配置] 成功保存配置: ");
-        AppendLog(currentConfig.configName);
-        AppendLog("\r\n");
-    } else {
-        AppendLog("[错误] 保存配置失败。\r\n");
+    if (GetSaveFileName(&ofn) == TRUE) {
+        FILE* f = fopen(szFile, "w");
+        if (!f) {
+            MessageBox(hMainWindow, "保存配置失败", "错误", MB_OK | MB_ICONERROR);
+            return;
+        }
+
+        fprintf(f, "[ECHTunnel]\n");
+        fprintf(f, "configName=%s\n", currentConfig.configName);
+        fprintf(f, "server=%s\n", currentConfig.server);
+        fprintf(f, "listen=%s\n", currentConfig.listen);
+        fprintf(f, "token=%s\n", currentConfig.token);
+        fprintf(f, "ip=%s\n", currentConfig.ip);
+        fprintf(f, "dns=%s\n", currentConfig.dns);
+        fprintf(f, "ech=%s\n", currentConfig.ech);
+        
+        fclose(f);
+        char msg[512];
+        snprintf(msg, sizeof(msg), "配置已保存到: %s", szFile);
+        MessageBox(hMainWindow, msg, "成功", MB_OK | MB_ICONINFORMATION);
+        AppendLog("[配置] 已保存配置文件\r\n");
     }
 }
 
 void LoadConfigFromFile() {
-    char configName[MAX_SMALL_LEN] = "默认配置";
-    if (GetWindowText(hConfigNameEdit, configName, MAX_SMALL_LEN) == 0) {
-        MessageBox(hMainWindow, "请输入要加载的配置名称。", "提示", MB_OK | MB_ICONWARNING);
-        return;
-    }
-
-    char fileName[MAX_PATH];
-    char configNameGBK[MAX_SMALL_LEN];
-    char appPath[MAX_PATH];
+    OPENFILENAME ofn;
+    char szFile[MAX_PATH] = "";
     
-    GetModuleFileName(NULL, appPath, MAX_PATH);
-    PathRemoveFileSpec(appPath);
-    
-    char configDir[MAX_PATH];
-    PathCombine(configDir, appPath, "config");
+    ZeroMemory(&ofn, sizeof(ofn));
+    ofn.lStructSize = sizeof(ofn);
+    ofn.hwndOwner = hMainWindow;
+    ofn.lpstrFile = szFile;
+    ofn.nMaxFile = sizeof(szFile);
+    ofn.lpstrFilter = "配置(*.ini)\0*.ini\0所有文件(*.*)\0*.*\0";
+    ofn.nFilterIndex = 1;
+    ofn.Flags = OFN_PATHMUSTEXIST | OFN_FILEMUSTEXIST | OFN_HIDEREADONLY;
 
-    char *gbkName = UTF8ToGBK(configName);
-    if (!gbkName) {
-        AppendLog("[错误] 配置名称编码转换失败。\r\n");
-        return;
+    if (GetOpenFileName(&ofn) == TRUE) {
+        char line[MAX_URL_LEN];
+        FILE* f = fopen(szFile, "r");
+        if (!f) {
+            MessageBox(hMainWindow, "打开配置失败", "错误", MB_OK | MB_ICONERROR);
+            return;
+        }
+
+        Config newConfig = {
+            "默认配置", "dns.alidns.com/dns-query", "cloudflare-ech.com", "example.com:443", "", "127.0.0.1:30000", ""
+        };
+
+        while (fgets(line, sizeof(line), f)) {
+            char* val = strchr(line, '=');
+            if (!val) continue;
+            *val++ = 0;
+            if (val[strlen(val)-1] == '\n') val[strlen(val)-1] = 0;
+            if (val[strlen(val)-1] == '\r') val[strlen(val)-1] = 0;
+
+            size_t key_len = strlen(line);
+            while (key_len > 0 && isspace(line[key_len - 1])) {
+                line[key_len - 1] = '\0';
+                key_len--;
+            }
+
+            if (!strcmp(line, "configName")) strncpy(newConfig.configName, val, sizeof(newConfig.configName) - 1);
+            else if (!strcmp(line, "server")) strncpy(newConfig.server, val, sizeof(newConfig.server) - 1);
+            else if (!strcmp(line, "listen")) strncpy(newConfig.listen, val, sizeof(newConfig.listen) - 1);
+            else if (!strcmp(line, "token")) strncpy(newConfig.token, val, sizeof(newConfig.token) - 1);
+            else if (!strcmp(line, "ip")) strncpy(newConfig.ip, val, sizeof(newConfig.ip) - 1);
+            else if (!strcmp(line, "dns")) strncpy(newConfig.dns, val, sizeof(newConfig.dns) - 1);
+            else if (!strcmp(line, "ech")) strncpy(newConfig.ech, val, sizeof(newConfig.ech) - 1);
+        }
+        fclose(f);
+        
+        currentConfig = newConfig;
+        char msg[512];
+        snprintf(msg, sizeof(msg), "配置已加载: %s", currentConfig.configName);
+        MessageBox(hMainWindow, msg, "成功", MB_OK | MB_ICONINFORMATION);
+        AppendLog("[配置] 已加载配置文件\r\n");
     }
-    _snprintf(configNameGBK, MAX_SMALL_LEN, "%s.ini", gbkName);
-    free(gbkName);
+}
 
-    PathCombine(fileName, configDir, configNameGBK);
-
-    if (GetFileAttributes(fileName) == INVALID_FILE_ATTRIBUTES) {
-        AppendLog("[错误] 配置不存在或无法访问: ");
-        AppendLog(configName);
-        AppendLog("\r\n");
-        return;
-    }
-
-    // Load config from file
-    GetPrivateProfileString("Config", "ConfigName", configName, currentConfig.configName, MAX_SMALL_LEN, fileName);
-    GetPrivateProfileString("Config", "Server", "example.com:443", currentConfig.server, MAX_URL_LEN, fileName);
-    GetPrivateProfileString("Config", "Listen", "127.0.0.1:30000", currentConfig.listen, MAX_SMALL_LEN, fileName);
-    GetPrivateProfileString("Config", "Token", "", currentConfig.token, MAX_URL_LEN, fileName);
-    GetPrivateProfileString("Config", "IP", "", currentConfig.ip, MAX_SMALL_LEN, fileName);
-    GetPrivateProfileString("Config", "DNS", "dns.alidns.com/dns-query", currentConfig.dns, MAX_SMALL_LEN, fileName);
-    GetPrivateProfileString("Config", "ECH", "cloudflare-ech.com", currentConfig.ech, MAX_SMALL_LEN, fileName);
-    
-    // SetControlValues() will be called in WM_COMMAND handler
-    AppendLog("[配置] 成功加载配置: ");
-    AppendLog(currentConfig.configName);
-    AppendLog("\r\n");
+void SaveConfig() {
+    // 自动保存当前配置到程序目录下的 config.ini (默认配置文件)
+    FILE* f = fopen("config.ini", "w");
+    if (!f) return;
+    fprintf(f, "[ECHTunnel]\nconfigName=%s\nserver=%s\nlisten=%s\ntoken=%s\nip=%s\ndns=%s\nech=%s\n", 
+        currentConfig.configName, currentConfig.server, currentConfig.listen, 
+        currentConfig.token, currentConfig.ip, currentConfig.dns, currentConfig.ech);
+    fclose(f);
 }
 
 void LoadConfig() {
-    // 从程序根目录的默认配置文件加载（如果存在）
-    char fileName[MAX_PATH];
-    GetModuleFileName(NULL, fileName, MAX_PATH);
-    PathRemoveFileSpec(fileName);
-    PathCombine(fileName, fileName, "default.ini");
+    // 自动从程序目录下的 config.ini 加载配置
+    FILE* f = fopen("config.ini", "r");
+    if (!f) return;
+    char line[MAX_URL_LEN];
+    Config newConfig = currentConfig;
+    
+    while (fgets(line, sizeof(line), f)) {
+        char* val = strchr(line, '=');
+        if (!val) continue;
+        *val++ = 0;
+        if (val[strlen(val)-1] == '\n') val[strlen(val)-1] = 0;
+        if (val[strlen(val)-1] == '\r') val[strlen(val)-1] = 0;
+        
+        size_t key_len = strlen(line);
+        while (key_len > 0 && isspace(line[key_len - 1])) {
+            line[key_len - 1] = '\0';
+            key_len--;
+        }
 
-    if (GetFileAttributes(fileName) != INVALID_FILE_ATTRIBUTES) {
-        GetPrivateProfileString("Config", "ConfigName", currentConfig.configName, currentConfig.configName, MAX_SMALL_LEN, fileName);
-        GetPrivateProfileString("Config", "Server", currentConfig.server, currentConfig.server, MAX_URL_LEN, fileName);
-        GetPrivateProfileString("Config", "Listen", currentConfig.listen, currentConfig.listen, MAX_SMALL_LEN, fileName);
-        GetPrivateProfileString("Config", "Token", currentConfig.token, currentConfig.token, MAX_URL_LEN, fileName);
-        GetPrivateProfileString("Config", "IP", currentConfig.ip, currentConfig.ip, MAX_SMALL_LEN, fileName);
-        GetPrivateProfileString("Config", "DNS", currentConfig.dns, currentConfig.dns, MAX_SMALL_LEN, fileName);
-        GetPrivateProfileString("Config", "ECH", currentConfig.ech, currentConfig.ech, MAX_SMALL_LEN, fileName);
-        AppendLog("[配置] 成功加载默认配置。\r\n");
+        if (!strcmp(line, "configName")) strncpy(newConfig.configName, val, sizeof(newConfig.configName) - 1);
+        else if (!strcmp(line, "server")) strncpy(newConfig.server, val, sizeof(newConfig.server) - 1);
+        else if (!strcmp(line, "listen")) strncpy(newConfig.listen, val, sizeof(newConfig.listen) - 1);
+        else if (!strcmp(line, "token")) strncpy(newConfig.token, val, sizeof(newConfig.token) - 1);
+        else if (!strcmp(line, "ip")) strncpy(newConfig.ip, val, sizeof(newConfig.ip) - 1);
+        else if (!strcmp(line, "dns")) strncpy(newConfig.dns, val, sizeof(newConfig.dns) - 1);
+        else if (!strcmp(line, "ech")) strncpy(newConfig.ech, val, sizeof(newConfig.ech) - 1);
     }
+    fclose(f);
+    currentConfig = newConfig;
 }
 
 // --- Subscription/Node Management ---
@@ -1008,7 +1062,6 @@ void AddSubscription() {
         return;
     }
     
-    // 检查是否已存在
     int count = SendMessage(hSubList, LB_GETCOUNT, 0, 0);
     for (int i = 0; i < count; i++) {
         char existingUrl[MAX_URL_LEN];
@@ -1070,6 +1123,8 @@ void LoadSubscriptionList() {
     if (!fp) return;
     
     char url[MAX_URL_LEN];
+    SendMessage(hSubList, LB_RESETCONTENT, 0, 0);
+    
     while (fgets(url, MAX_URL_LEN, fp)) {
         size_t len = strlen(url);
         if (len > 0 && url[len - 1] == '\n') url[len - 1] = '\0';
@@ -1085,126 +1140,328 @@ void LoadSubscriptionList() {
 void ClearNodeList() {
     SendMessage(hNodeList, LB_RESETCONTENT, 0, 0);
     g_totalNodeCount = 0;
-    AppendLog("[节点] 节点列表已清空。\r\n");
-    // 清空 nodes 目录下的文件
-    char path[MAX_PATH];
-    GetModuleFileName(NULL, path, MAX_PATH);
-    PathRemoveFileSpec(path);
-    PathCombine(path, path, "nodes\\*");
     
-    WIN32_FIND_DATA ffd;
-    HANDLE hFind = FindFirstFile(path, &ffd);
+    // 清空 nodes 目录下的文件
+    SHCreateDirectoryEx(NULL, "nodes", NULL); // 确保目录存在
+    WIN32_FIND_DATAA ffd;
+    HANDLE hFind = FindFirstFileA("nodes\\*.ini", &ffd);
 
     if (hFind != INVALID_HANDLE_VALUE) {
         do {
             if (!(ffd.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY)) {
                 char filePath[MAX_PATH];
-                PathCombine(filePath, path, ffd.cFileName);
-                DeleteFile(filePath);
+                snprintf(filePath, MAX_PATH, "nodes\\%s", ffd.cFileName);
+                DeleteFileA(filePath);
             }
-        } while (FindNextFile(hFind, &ffd) != 0);
+        } while (FindNextFileA(hFind, &ffd) != 0);
         FindClose(hFind);
         AppendLog("[节点] nodes 目录下旧配置文件已清除。\r\n");
     }
+    
+    AppendLog("[节点] 节点列表已清空。\r\n");
 }
 
 void SaveNodeConfig(int nodeIndex) {
-    // 保存当前配置到临时文件，以便用户切换时可以恢复
-    Config tempConfig;
-    GetControlValues();
-    memcpy(&tempConfig, &currentConfig, sizeof(Config));
+    if (nodeIndex < 0 || nodeIndex >= g_totalNodeCount) return;
 
-    char nodeName[MAX_URL_LEN];
-    SendMessage(hNodeList, LB_GETTEXT, nodeIndex, (LPARAM)nodeName);
+    // 1. 创建 nodes 目录
+    SHCreateDirectoryEx(NULL, "nodes", NULL);
 
+    // 2. 构造文件名 (e.g., nodes/000.ini, nodes/001.ini)
     char fileName[MAX_PATH];
-    char appPath[MAX_PATH];
-    GetModuleFileName(NULL, appPath, MAX_PATH);
-    PathRemoveFileSpec(appPath);
-    
-    char nodesDir[MAX_PATH];
-    PathCombine(nodesDir, appPath, "nodes");
-    CreateDirectory(nodesDir, NULL);
+    snprintf(fileName, sizeof(fileName), "nodes/%03d.ini", nodeIndex);
 
-    char nodeFileName[256];
-    _snprintf(nodeFileName, 256, "%d.ini", nodeIndex);
-    PathCombine(fileName, nodesDir, nodeFileName);
-
-    if (WritePrivateProfileString("Node", "ConfigName", tempConfig.configName, fileName) &&
-        WritePrivateProfileString("Node", "Server", tempConfig.server, fileName) &&
-        WritePrivateProfileString("Node", "Listen", tempConfig.listen, fileName) &&
-        WritePrivateProfileString("Node", "Token", tempConfig.token, fileName) &&
-        WritePrivateProfileString("Node", "IP", tempConfig.ip, fileName) &&
-        WritePrivateProfileString("Node", "DNS", tempConfig.dns, fileName) &&
-        WritePrivateProfileString("Node", "ECH", tempConfig.ech, fileName) &&
-        WritePrivateProfileString("Node", "NodeName", nodeName, fileName))
-    {
-        AppendLog("[节点] 当前配置已保存到临时文件。\r\n");
+    // 3. 写入配置
+    FILE* f = fopen(fileName, "w");
+    if (!f) {
+        AppendLog("[错误] 无法保存节点配置文件\r\n");
+        return;
     }
+
+    // 确保获取最新的全局配置作为默认值
+    GetControlValues(); 
+
+    fprintf(f, "[ECHTunnel]\n");
+    // 写入节点名称和服务器地址
+    fprintf(f, "configName=%s\n", g_nodes[nodeIndex].name);
+    fprintf(f, "server=%s\n", g_nodes[nodeIndex].server);
+    // 写入默认配置（取自全局 currentConfig）
+    fprintf(f, "listen=%s\n", currentConfig.listen);
+    fprintf(f, "token=%s\n", currentConfig.token);
+    fprintf(f, "ip=%s\n", currentConfig.ip);
+    fprintf(f, "dns=%s\n", currentConfig.dns);
+    fprintf(f, "ech=%s\n", currentConfig.ech);
+
+    fclose(f);
+    // AppendLog("[节点] 当前配置已保存到临时文件。\r\n"); // 频繁调用会刷屏，禁用
+}
+
+void LoadNodeList() {
+    SendMessage(hNodeList, LB_RESETCONTENT, 0, 0);
+    g_totalNodeCount = 0;
+
+    // 1. 查找 nodes 目录下的所有 .ini 文件
+    WIN32_FIND_DATAA findData;
+    HANDLE hFind = FindFirstFileA("nodes/*.ini", &findData);
+
+    if (hFind == INVALID_HANDLE_VALUE) {
+        return;
+    }
+
+    do {
+        if (!(findData.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY)) {
+            char fileName[MAX_PATH];
+            snprintf(fileName, sizeof(fileName), "nodes/%s", findData.cFileName);
+            
+            // 2. 读取配置文件以获取节点名称和服务器地址
+            FILE* f = fopen(fileName, "r");
+            if (f) {
+                char line[MAX_URL_LEN];
+                char name[MAX_SMALL_LEN] = "未知节点";
+                char server[MAX_URL_LEN] = "";
+                
+                while (fgets(line, sizeof(line), f)) {
+                    char* val = strchr(line, '=');
+                    if (!val) continue;
+                    *val++ = 0;
+                    if (val[strlen(val)-1] == '\n') val[strlen(val)-1] = 0;
+                    if (val[strlen(val)-1] == '\r') val[strlen(val)-1] = 0;
+
+                    size_t key_len = strlen(line);
+                    while (key_len > 0 && isspace(line[key_len - 1])) {
+                        line[key_len - 1] = '\0';
+                        key_len--;
+                    }
+                    
+                    if (!strcmp(line, "configName")) strncpy(name, val, sizeof(name) - 1);
+                    else if (!strcmp(line, "server")) strncpy(server, val, sizeof(server) - 1);
+                }
+                fclose(f);
+
+                if (server[0] != '\0' && g_totalNodeCount < MAX_NODES) {
+                    // 3. 存储到全局数组并添加到 ListBox
+                    strncpy(g_nodes[g_totalNodeCount].name, name, sizeof(g_nodes[0].name) - 1);
+                    strncpy(g_nodes[g_totalNodeCount].server, server, sizeof(g_nodes[0].server) - 1);
+                    SendMessage(hNodeList, LB_ADDSTRING, 0, (LPARAM)name);
+                    g_totalNodeCount++;
+                }
+            }
+        }
+    } while (FindNextFileA(hFind, &findData));
+
+    FindClose(hFind);
+    // AppendLogAsync("[系统] 节点列表加载完成.\r\n"); // 启动时调用，不需提示
+}
+
+void SaveNodeList() {
+    // 节点配置已在 ParseSubscriptionData 和 SaveNodeConfig 中处理，此函数无需操作。
 }
 
 void LoadNodeConfigByIndex(int nodeIndex, BOOL autoStart) {
+    if (nodeIndex < 0 || nodeIndex >= g_totalNodeCount) return;
+
+    // 1. 构造文件名
     char fileName[MAX_PATH];
-    char appPath[MAX_PATH];
-    GetModuleFileName(NULL, appPath, MAX_PATH);
-    PathRemoveFileSpec(appPath);
-    
-    char nodesDir[MAX_PATH];
-    PathCombine(nodesDir, appPath, "nodes");
+    snprintf(fileName, sizeof(fileName), "nodes/%03d.ini", nodeIndex);
 
-    char nodeFileName[256];
-    _snprintf(nodeFileName, 256, "%d.ini", nodeIndex);
-    PathCombine(fileName, nodesDir, nodeFileName);
-
-    if (GetFileAttributes(fileName) == INVALID_FILE_ATTRIBUTES) {
-        AppendLog("[错误] 节点配置不存在。\r\n");
+    // 2. 读取配置文件，覆盖 currentConfig
+    FILE* f = fopen(fileName, "r");
+    if (!f) {
+        AppendLog("[错误] 节点文件不存在或无法打开.\r\n");
         return;
     }
 
-    // Load node config
-    GetPrivateProfileString("Node", "ConfigName", "节点配置", currentConfig.configName, MAX_SMALL_LEN, fileName);
-    GetPrivateProfileString("Node", "Server", "example.com:443", currentConfig.server, MAX_URL_LEN, fileName);
-    GetPrivateProfileString("Node", "Listen", "127.0.0.1:30000", currentConfig.listen, MAX_SMALL_LEN, fileName);
-    GetPrivateProfileString("Node", "Token", "", currentConfig.token, MAX_URL_LEN, fileName);
-    GetPrivateProfileString("Node", "IP", "", currentConfig.ip, MAX_SMALL_LEN, fileName);
-    GetPrivateProfileString("Node", "DNS", "dns.alidns.com/dns-query", currentConfig.dns, MAX_SMALL_LEN, fileName);
-    GetPrivateProfileString("Node", "ECH", "cloudflare-ech.com", currentConfig.ech, MAX_SMALL_LEN, fileName);
+    char line[MAX_URL_LEN];
+    Config tempConfig = currentConfig; 
 
-    SetControlValues();
-    
-    char nodeName[MAX_URL_LEN];
-    GetPrivateProfileString("Node", "NodeName", "Unknown Node", nodeName, MAX_URL_LEN, fileName);
+    while (fgets(line, sizeof(line), f)) {
+        char* val = strchr(line, '=');
+        if (!val) continue;
+        *val++ = 0;
+        if (val[strlen(val)-1] == '\n') val[strlen(val)-1] = 0;
+        if (val[strlen(val)-1] == '\r') val[strlen(val)-1] = 0;
 
-    AppendLog("[节点] ");
-    AppendLog(nodeName);
-    AppendLog(autoStart ? " 已启用。\r\n" : " 配置已加载。\r\n");
+        size_t key_len = strlen(line);
+        while (key_len > 0 && isspace(line[key_len - 1])) {
+            line[key_len - 1] = '\0';
+            key_len--;
+        }
+        
+        if (!strcmp(line, "configName")) strncpy(tempConfig.configName, val, sizeof(tempConfig.configName) - 1);
+        else if (!strcmp(line, "server")) strncpy(tempConfig.server, val, sizeof(tempConfig.server) - 1);
+        else if (!strcmp(line, "listen")) strncpy(tempConfig.listen, val, sizeof(tempConfig.listen) - 1);
+        else if (!strcmp(line, "token")) strncpy(tempConfig.token, val, sizeof(tempConfig.token) - 1);
+        else if (!strcmp(line, "ip")) strncpy(tempConfig.ip, val, sizeof(tempConfig.ip) - 1);
+        else if (!strcmp(line, "dns")) strncpy(tempConfig.dns, val, sizeof(tempConfig.dns) - 1);
+        else if (!strcmp(line, "ech")) strncpy(tempConfig.ech, val, sizeof(tempConfig.ech) - 1);
+    }
+    fclose(f);
+
+    currentConfig = tempConfig;
+    SetControlValues(); // 更新 UI
+
+    AppendLogAsync("[节点] ");
+    AppendLogAsync(currentConfig.configName);
+    AppendLogAsync(autoStart ? " 已启用。\r\n" : " 配置已加载。\r\n");
+
+    if (autoStart) {
+        if (isProcessRunning) StopProcess();
+        SaveConfig(); // 保存当前配置到默认 ini
+        StartProcess(); // 启动代理
+    }
 }
-
 
 // --- Network and Parsing ---
 
-void ProcessSingleSubscription(const char* url) {
-    HINTERNET hInternet = InternetOpen("ECHWorkerClient", INTERNET_OPEN_TYPE_PRECONFIG, NULL, NULL, 0);
-    if (!hInternet) {
-        AppendLog("[错误] 无法初始化网络连接。\r\n");
+void ProcessNodeUrl(const char* nodeUrl) {
+    if (g_totalNodeCount >= MAX_NODES) {
+        AppendLog("[警告] 节点列表已满，跳过.\r\n");
         return;
     }
 
-    AppendLog("[订阅] 正在获取: ");
-    AppendLog(url);
-    AppendLog("\r\n");
+    char tempUrl[MAX_URL_LEN];
+    strncpy(tempUrl, nodeUrl, sizeof(tempUrl) - 1);
+    tempUrl[sizeof(tempUrl) - 1] = '\0';
 
-    HINTERNET hConnect = InternetOpenUrl(hInternet, url, NULL, 0, INTERNET_FLAG_RELOAD | INTERNET_FLAG_NO_CACHE_WRITE, 0);
+    char* name = "未知节点";
+    char* server_port = "";
+    char* decoded_name = NULL;
+    
+    // 1. 提取 #name 部分
+    char* hash = strchr(tempUrl, '#');
+    if (hash) {
+        *hash = '\0';
+        name = hash + 1;
+        
+        // URL Decode 名称
+        decoded_name = URLDecode(name);
+        if (decoded_name) {
+            name = decoded_name;
+        }
+    }
+
+    // 2. 提取协议后的地址部分
+    char* protoEnd = strstr(tempUrl, "://");
+    if (!protoEnd) {
+        AppendLogAsync("[解析] 错误: 无效的节点URL格式: ");
+        AppendLogAsync(nodeUrl);
+        AppendLogAsync("\r\n");
+        if (decoded_name) free(decoded_name); 
+        return;
+    }
+    
+    char* addrStart = protoEnd + 3;
+
+    // 3. 寻找 server:port，跳过可能的 uuid/userinfo
+    char* atSign = strchr(addrStart, '@');
+    if (atSign) {
+        server_port = atSign + 1;
+    } else {
+        server_port = addrStart;
+    }
+
+    // 4. 寻找第一个非地址字符 (通常是 ? 或 /)
+    char* paramStart = strpbrk(server_port, "?/");
+    if (paramStart) {
+        *paramStart = '\0';
+    }
+
+    // 5. 存储节点配置
+    strncpy(g_nodes[g_totalNodeCount].name, name, sizeof(g_nodes[0].name) - 1);
+    strncpy(g_nodes[g_totalNodeCount].server, server_port, sizeof(g_nodes[0].server) - 1);
+    g_nodes[g_totalNodeCount].name[sizeof(g_nodes[0].name) - 1] = '\0';
+    g_nodes[g_totalNodeCount].server[sizeof(g_nodes[0].server) - 1] = '\0';
+
+    // 6. 保存节点配置文件并添加到 ListBox
+    SaveNodeConfig(g_totalNodeCount); 
+    SendMessage(hNodeList, LB_ADDSTRING, 0, (LPARAM)g_nodes[g_totalNodeCount].name);
+    
+    g_totalNodeCount++;
+    
+    if (decoded_name) free(decoded_name);
+}
+
+void ParseSubscriptionData(const char* data) {
+    AppendLog("[解析] 开始解析订阅数据...\r\n");
+
+    char* content = NULL;
+    size_t content_len = 0;
+    
+    // 1. 检查并尝试 Base64 解码
+    char* decoded_content = base64_decode(data, &content_len);
+    
+    if (decoded_content && content_len > 0) {
+        content = decoded_content;
+    } else {
+        // 如果解码失败，尝试作为纯文本
+        if (decoded_content) free(decoded_content);
+        content = strdup(data);
+        if (!content) return;
+    }
+
+    // 2. 将内容从 UTF-8 转换为 GBK（用于 strtok，因为 WinAPI 默认是 GBK）
+    char* gbkContent = UTF8ToGBK(content);
+    if (!gbkContent) {
+        AppendLog("[解析] 编码转换失败。\r\n");
+        free(content);
+        return;
+    }
+
+    // 3. 按行分割并解析每个节点 URL
+    char* line = strtok(gbkContent, "\n\r");
+    int nodesAdded = 0;
+    while (line != NULL) {
+        // 移除行首尾空格
+        while (isspace(*line)) line++;
+        size_t len = strlen(line);
+        while (len > 0 && isspace(line[len - 1])) line[--len] = 0;
+        
+        if (len > 0 && strstr(line, "://")) {
+            // 找到一个有效的节点 URL
+            ProcessNodeUrl(line);
+            nodesAdded++;
+        }
+        line = strtok(NULL, "\n\r");
+    }
+
+    free(content);
+    free(gbkContent);
+
+    char msg[128];
+    snprintf(msg, sizeof(msg), "[解析] 新增节点: %d, 总节点数: %d\r\n", nodesAdded, g_totalNodeCount);
+    AppendLog(msg);
+}
+
+void ProcessSingleSubscription(const char* url) {
+    if (g_totalNodeCount >= MAX_NODES) {
+        AppendLog("[警告] 节点列表已满，跳过订阅.\r\n");
+        return;
+    }
+
+    AppendLogAsync("[订阅] 正在获取: ");
+    AppendLogAsync(url);
+    AppendLogAsync("...\r\n");
+    
+    HINTERNET hInternet = NULL;
+    HINTERNET hConnect = NULL;
+    
+    hInternet = InternetOpenA("ECHWorkerClient", INTERNET_OPEN_TYPE_PRECONFIG, NULL, NULL, 0);
+    if (!hInternet) {
+        AppendLog("[错误] WinINet 初始化失败.\r\n");
+        return;
+    }
+    
+    hConnect = InternetOpenUrlA(hInternet, url, NULL, 0, INTERNET_FLAG_RELOAD | INTERNET_FLAG_PRAGMA_NOCACHE, 0);
     if (!hConnect) {
-        AppendLog("[错误] 无法连接到订阅地址。\r\n");
+        AppendLog("[错误] 无法打开订阅链接。\r\n");
         InternetCloseHandle(hInternet);
         return;
     }
-
-    DWORD bufSize = 32768;
+    
+    DWORD bufSize = 512 * 1024; // 512KB 缓冲区
     char* buffer = (char*)malloc(bufSize);
     if (!buffer) {
-        AppendLog("[错误] 内存分配失败。\r\n");
+        AppendLog("[错误] 内存分配失败.\r\n");
         InternetCloseHandle(hConnect);
         InternetCloseHandle(hInternet);
         return;
@@ -1212,18 +1469,25 @@ void ProcessSingleSubscription(const char* url) {
     buffer[0] = '\0';
     
     DWORD totalRead = 0;
-    DWORD bytesRead = 0;
-    char tempBuf[4096];
-    
+    DWORD bytesRead;
+    char tempBuf[4096]; 
+
     while (InternetReadFile(hConnect, tempBuf, sizeof(tempBuf) - 1, &bytesRead) && bytesRead > 0) {
         tempBuf[bytesRead] = 0;
         if (totalRead + bytesRead < bufSize - 1) {
             strcat(buffer, tempBuf);
             totalRead += bytesRead;
         } else {
-            // 简单处理：如果数据超过初始缓冲区大小，尝试重新分配
-            AppendLog("[警告] 订阅内容过大，可能被截断。\r\n");
-            break;
+            char* newBuffer = (char*)realloc(buffer, bufSize + 512 * 1024);
+            if (newBuffer) {
+                buffer = newBuffer;
+                bufSize += 512 * 1024;
+                strcat(buffer, tempBuf);
+                totalRead += bytesRead;
+            } else {
+                AppendLog("[警告] 数据过大，截断.\r\n");
+                break; 
+            }
         }
     }
     
@@ -1233,7 +1497,7 @@ void ProcessSingleSubscription(const char* url) {
     if (totalRead > 0) {
         ParseSubscriptionData(buffer);
     } else {
-        AppendLog("[订阅] 获取数据为空。\r\n");
+        AppendLog("[订阅] 获取数据为空\r\n");
     }
     
     free(buffer);
@@ -1255,155 +1519,75 @@ void FetchAllSubscriptions() {
     // 2. 重置全局节点计数器
     g_totalNodeCount = 0;
     
-    // 3. 清空 nodes 目录下的旧文件
-    char path[MAX_PATH];
-    GetModuleFileName(NULL, path, MAX_PATH);
-    PathRemoveFileSpec(path);
-    PathCombine(path, path, "nodes");
-    
-    // 确保 nodes 目录存在
-    CreateDirectory(path, NULL); 
-    
-    char searchPath[MAX_PATH];
-    PathCombine(searchPath, path, "*.ini");
-    
-    WIN32_FIND_DATA ffd;
-    HANDLE hFind = FindFirstFile(searchPath, &ffd);
+    // 3. 清理 nodes 目录下的旧文件，确保从零开始
+    ClearNodeList();
 
-    if (hFind != INVALID_HANDLE_VALUE) {
-        do {
-            if (!(ffd.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY)) {
-                char filePath[MAX_PATH];
-                PathCombine(filePath, path, ffd.cFileName);
-                DeleteFile(filePath);
-            }
-        } while (FindNextFile(hFind, &ffd) != 0);
-        FindClose(hFind);
-    }
-    
-    // 4. 遍历所有订阅链接并处理
+    // 4. 遍历订阅列表并获取数据
     for (int i = 0; i < subCount; i++) {
         char url[MAX_URL_LEN];
         SendMessage(hSubList, LB_GETTEXT, i, (LPARAM)url);
-        ProcessSingleSubscription(url);
-    }
-    
-    AppendLog("--------------------------\r\n");
-    char finishMsg[256];
-    _snprintf(finishMsg, 256, "[订阅] 更新完成。总计 %d 个节点。\r\n", g_totalNodeCount);
-    AppendLog(finishMsg);
-}
-
-void ParseSubscriptionData(const char* data) {
-    char* decodedData = NULL;
-    size_t decodedLen = 0;
-    
-    // 1. 检查是否为 Base64 编码
-    if (is_base64_encoded(data)) {
-        decodedData = base64_decode(data, &decodedLen);
-    } else {
-        // 如果不是 Base64，假设已经是明文
-        decodedData = strdup(data);
-        if (decodedData) decodedLen = strlen(decodedData);
-    }
-    
-    if (!decodedData || decodedLen == 0) {
-        AppendLog("[解析] 订阅数据解码失败或内容为空。\r\n");
-        return;
-    }
-
-    // 2. 将数据从 UTF-8 转换为 GBK（因为 WinAPI 默认使用 GBK 存储文件）
-    char* gbkData = UTF8ToGBK(decodedData);
-    if (!gbkData) {
-        AppendLog("[解析] UTF-8 到 GBK 转换失败。\r\n");
-        free(decodedData);
-        return;
-    }
-
-    // 3. 逐行解析 Vmess/Vless/Trojan 链接
-    char* line = strtok(gbkData, "\n\r");
-    char nodePrefix[64];
-    
-    while (line) {
-        if (strstr(line, "vmess://") == line || strstr(line, "vless://") == line || strstr(line, "trojan://") == line) {
-            
-            // 4. URL 解码（处理链接中的备注/名称）
-            char* urlEncodedPart = strrchr(line, '#');
-            if (urlEncodedPart) {
-                // 找到 # 后的部分
-                char* decodedName = URLDecode(urlEncodedPart + 1);
-                
-                // 将原链接中的名称替换为解码后的名称
-                char tempLine[MAX_URL_LEN];
-                *urlEncodedPart = '\0'; // 暂时截断 # 及之后的部分
-                _snprintf(tempLine, MAX_URL_LEN, "%s#%s", line, decodedName ? decodedName : "Unknown Node");
-                
-                // 5. 提取节点名称 (这里只做显示用，实际配置解析需要更复杂的逻辑)
-                char* nodeName = decodedName ? decodedName : "Unknown Node";
-                
-                // 6. 保存节点配置 (这里仅保存一个简单的节点名称，完整功能需要解析整个链接并生成配置文件)
-                char fileName[MAX_PATH];
-                char appPath[MAX_PATH];
-                GetModuleFileName(NULL, appPath, MAX_PATH);
-                PathRemoveFileSpec(appPath);
-                
-                char nodesDir[MAX_PATH];
-                PathCombine(nodesDir, appPath, "nodes");
-                CreateDirectory(nodesDir, NULL);
-
-                char nodeFileName[256];
-                _snprintf(nodeFileName, 256, "%d.ini", g_totalNodeCount);
-                PathCombine(fileName, nodesDir, nodeFileName);
-                
-                // 简单示例：将节点名称和原始链接保存为 ini 文件
-                WritePrivateProfileString("Node", "NodeName", nodeName, fileName);
-                WritePrivateProfileString("Node", "Link", tempLine, fileName); 
-                // 实际应解析 link，提取 server, port, uuid/password, alpn/sni 等，并保存到文件
-
-                // 7. 更新 UI 列表
-                SendMessage(hNodeList, LB_ADDSTRING, 0, (LPARAM)nodeName);
-                g_totalNodeCount++;
-                
-                if (decodedName) free(decodedName);
-            }
+        if (strlen(url) > 0) {
+            ProcessSingleSubscription(url);
         }
-        line = strtok(NULL, "\n\r");
     }
-    
-    free(decodedData);
-    free(gbkData);
+
+    AppendLog("[订阅] 所有订阅更新完成.\r\n");
+    AppendLog("--------------------------\r\n");
 }
+
 
 // --- Encoding/Decoding Functions ---
 
 char* UTF8ToGBK(const char* utf8Str) {
-    if (!utf8Str) return strdup("");
-    
-    int len = MultiByteToWideChar(CP_UTF8, 0, utf8Str, -1, NULL, 0);
-    WCHAR* wStr = (WCHAR*)malloc(len * sizeof(WCHAR));
-    if (!wStr) return NULL;
-    MultiByteToWideChar(CP_UTF8, 0, utf8Str, -1, wStr, len);
+    if (!utf8Str) return NULL;
+    int lenW = MultiByteToWideChar(CP_UTF8, 0, utf8Str, -1, NULL, 0);
+    if (lenW == 0) return NULL;
 
-    int gbkLen = WideCharToMultiByte(CP_ACP, 0, wStr, -1, NULL, 0, NULL, NULL);
-    char* gbkStr = (char*)malloc(gbkLen);
-    if (!gbkStr) { free(wStr); return NULL; }
-    WideCharToMultiByte(CP_ACP, 0, wStr, -1, gbkStr, gbkLen, NULL, NULL);
+    wchar_t* wideStr = (wchar_t*)malloc(lenW * sizeof(wchar_t));
+    if (!wideStr) return NULL;
 
-    free(wStr);
+    MultiByteToWideChar(CP_UTF8, 0, utf8Str, -1, wideStr, lenW);
+
+    int lenA = WideCharToMultiByte(CP_ACP, 0, wideStr, -1, NULL, 0, NULL, NULL);
+    if (lenA == 0) {
+        free(wideStr);
+        return NULL;
+    }
+
+    char* gbkStr = (char*)malloc(lenA);
+    if (!gbkStr) {
+        free(wideStr);
+        return NULL;
+    }
+
+    WideCharToMultiByte(CP_ACP, 0, wideStr, -1, gbkStr, lenA, NULL, NULL);
+
+    free(wideStr);
     return gbkStr;
 }
 
 char* GBKToUTF8(const char* gbkStr) {
-    if (!gbkStr) return strdup("");
-    
-    int len = MultiByteToWideChar(CP_ACP, 0, gbkStr, -1, NULL, 0);
-    WCHAR* wStr = (WCHAR*)malloc(len * sizeof(WCHAR));
-    if (!wStr) return NULL;
-    MultiByteToWideChar(CP_ACP, 0, gbkStr, -1, wStr, len);
+    if (!gbkStr) return NULL;
+    int lenW = MultiByteToWideChar(CP_ACP, 0, gbkStr, -1, NULL, 0);
+    if (lenW == 0) return NULL;
+
+    wchar_t* wideStr = (wchar_t*)malloc(lenW * sizeof(wchar_t));
+    if (!wideStr) return NULL;
+
+    MultiByteToWideChar(CP_ACP, 0, gbkStr, -1, wideStr, lenW);
 
     int utf8Len = WideCharToMultiByte(CP_UTF8, 0, wStr, -1, NULL, 0, NULL, NULL);
+    if (utf8Len == 0) {
+        free(wideStr);
+        return NULL;
+    }
+
     char* utf8Str = (char*)malloc(utf8Len);
-    if (!utf8Str) { free(wStr); return NULL; }
+    if (!utf8Str) {
+        free(wideStr);
+        return NULL;
+    }
+
     WideCharToMultiByte(CP_UTF8, 0, wStr, -1, utf8Str, utf8Len, NULL, NULL);
 
     free(wStr);
@@ -1411,82 +1595,98 @@ char* GBKToUTF8(const char* gbkStr) {
 }
 
 char* URLDecode(const char* str) {
+    if (!str) return NULL;
     size_t len = strlen(str);
     char* decoded = (char*)malloc(len + 1);
     if (!decoded) return NULL;
-    char* dest = decoded;
-    
-    for (size_t i = 0; i < len; i++) {
+
+    size_t i, j = 0;
+    for (i = 0; i < len; i++) {
         if (str[i] == '%') {
             if (i + 2 < len) {
                 char hex[3] = {str[i+1], str[i+2], '\0'};
-                *dest++ = (char)strtol(hex, NULL, 16);
-                i += 2;
+                char* endptr;
+                long val = strtol(hex, &endptr, 16);
+                if (*endptr == '\0') {
+                    decoded[j++] = (char)val;
+                    i += 2;
+                } else {
+                    // Invalid hex code, treat as literal character
+                    decoded[j++] = str[i];
+                }
             } else {
-                *dest++ = str[i];
+                decoded[j++] = str[i];
             }
         } else if (str[i] == '+') {
-            *dest++ = ' ';
+            decoded[j++] = ' ';
         } else {
-            *dest++ = str[i];
+            decoded[j++] = str[i];
         }
     }
-    *dest = '\0';
+    decoded[j] = '\0';
     return decoded;
 }
 
 BOOL is_base64_encoded(const char* data) {
+    // 检查是否包含非 Base64 字符
     if (!data) return FALSE;
-    size_t len = strlen(data);
-    if (len % 4 != 0) return FALSE;
-
-    for (size_t i = 0; i < len; i++) {
-        if (!isalnum(data[i]) && data[i] != '+' && data[i] != '/' && data[i] != '=') {
+    
+    for (const char* p = data; *p; p++) {
+        if (isspace(*p)) continue;
+        if (!isalnum(*p) && *p != '+' && *p != '/' && *p != '=' && *p != '-' && *p != '_') {
             return FALSE;
         }
     }
-    return TRUE;
-}
-
-// 简化的 base64_decode (需要一个完整的实现，这里提供一个骨架)
-// 实际生产环境应使用更健壮的库或实现
-char* base64_decode(const char* input, size_t* out_len) {
-    // 警告: 这是一个简化的/不完整的 Base64 解码实现骨架。
-    // 在生产环境中，应使用如 Mbed TLS, OpenSSL 或 Windows Cryptography API 提供的 Base64 解码函数。
-    // 由于 WinAPI 缺乏直接的公共 Base64 解码函数，这里仅为占位。
     
-    int len = MultiByteToWideChar(CP_UTF8, 0, input, -1, NULL, 0);
-    if (len == 0) return NULL;
-    
-    // Windows API Cryptographic functions (需要引入 Wincrypt.h 和 lib Advapi32.lib)
-    // 假设 Advapi32.lib 已链接
-
-    DWORD dwSkip = 0;
-    DWORD dwFlags = CRYPT_STRING_BASE64;
-    
-    // 1. 获取所需缓冲区大小
-    DWORD dwDestLen = 0;
-    if (!CryptStringToBinary(input, 0, dwFlags, NULL, &dwDestLen, &dwSkip, NULL)) {
-        // 如果失败，返回原始数据或 NULL
-        *out_len = 0;
-        return strdup(input); // 简单返回原始数据
+    // 尝试解码标准 Base64，如果成功，则认为是 Base64
+    DWORD dwLen = 0;
+    if (CryptStringToBinaryA(data, 0, CRYPT_STRING_BASE64, NULL, &dwLen, NULL, NULL)) {
+        return TRUE;
+    }
+    // 尝试解码 URL-safe Base64
+    if (CryptStringToBinaryA(data, 0, CRYPT_STRING_BASE64URL, NULL, &dwLen, NULL, NULL)) {
+        return TRUE;
     }
 
-    // 2. 分配缓冲区
-    BYTE* pbDest = (BYTE*)malloc(dwDestLen + 1);
+    return FALSE;
+}
+
+char* base64_decode(const char* input, size_t* out_len) {
+    if (!input || !out_len) return NULL;
+    
+    DWORD dwDestLen = 0;
+    
+    // 尝试标准 Base64 解码，获取所需大小
+    if (!CryptStringToBinaryA(input, 0, CRYPT_STRING_BASE64, NULL, &dwDestLen, NULL, NULL)) {
+        // 尝试 URL-safe Base64 解码
+        if (!CryptStringToBinaryA(input, 0, CRYPT_STRING_BASE64URL, NULL, &dwDestLen, NULL, NULL)) {
+            *out_len = 0;
+            return NULL;
+        }
+    }
+
+    // 分配缓冲区
+    BYTE* pbDest = (BYTE*)malloc(dwDestLen + 1); 
     if (!pbDest) {
         *out_len = 0;
         return NULL;
     }
 
-    // 3. 执行解码
-    if (!CryptStringToBinary(input, 0, dwFlags, pbDest, &dwDestLen, &dwSkip, NULL)) {
-        free(pbDest);
-        *out_len = 0;
-        return strdup(input); // 解码失败，返回原始数据
+    // 再次尝试解码并写入缓冲区
+    if (CryptStringToBinaryA(input, 0, CRYPT_STRING_BASE64, pbDest, &dwDestLen, NULL, NULL) ||
+        CryptStringToBinaryA(input, 0, CRYPT_STRING_BASE64URL, pbDest, &dwDestLen, NULL, NULL)) {
+        pbDest[dwDestLen] = '\0'; 
+        *out_len = dwDestLen;
+        return (char*)pbDest;
     }
 
-    pbDest[dwDestLen] = '\0';
-    *out_len = dwDestLen;
-    return (char*)pbDest;
+    free(pbDest);
+    *out_len = 0;
+    return NULL;
+}
+
+// 占位函数：检查文件是否为 UTF8
+BOOL IsUTF8File(const char* fileName) {
+    // 假设 Base64 解码后的内容通常是 UTF-8
+    return TRUE; 
 }
