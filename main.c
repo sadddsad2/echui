@@ -358,6 +358,20 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam) 
                     FetchAllSubscriptions();
                     break;
 
+                // ** 修改处：处理订阅列表的 LBN_SELCHANGE 事件 **
+                case ID_SUB_LIST:
+                    if (HIWORD(wParam) == LBN_SELCHANGE) {
+                        int sel = SendMessage(hSubList, LB_GETCURSEL, 0, 0);
+                        if (sel != LB_ERR) {
+                            char url[MAX_URL_LEN];
+                            // 获取选中的 URL
+                            SendMessage(hSubList, LB_GETTEXT, sel, (LPARAM)url);
+                            // 将 URL 放入输入框，允许用户修改
+                            SetWindowText(hSubscribeUrlEdit, url);
+                        }
+                    }
+                    break;
+
                 case ID_NODE_LIST:
                     if (HIWORD(wParam) == LBN_SELCHANGE) {
                         int sel = SendMessage(hNodeList, LB_GETCURSEL, 0, 0);
