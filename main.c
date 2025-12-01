@@ -52,7 +52,6 @@ int Scale(int x) {
 #define ID_CLEAR_LOG_BTN    1012
 #define ID_LOG_EDIT         1013
 #define ID_SAVE_CONFIG_BTN  1014
-// ID_LOAD_CONFIG_BTN 1015 已移除
 // 订阅相关ID
 #define ID_SUBSCRIBE_URL_EDIT 1016
 #define ID_FETCH_SUB_BTN    1017
@@ -64,7 +63,7 @@ int Scale(int x) {
 
 HWND hMainWindow;
 HWND hConfigNameEdit, hServerEdit, hListenEdit, hTokenEdit, hIpEdit, hDnsEdit, hEchEdit;
-HWND hStartBtn, hStopBtn, hLogEdit, hSaveConfigBtn; // hLoadConfigBtn 移除
+HWND hStartBtn, hStopBtn, hLogEdit, hSaveConfigBtn;
 HWND hSubscribeUrlEdit, hFetchSubBtn, hNodeList;
 HWND hAddSubBtn, hDelSubBtn, hSubList;
 HWND hDelNodeBtn; // 新增句柄
@@ -352,8 +351,6 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam) 
                     GetControlValues();
                     SaveOrUpdateSelectedNode(); // 修改功能：保存到选中节点或新增
                     break;
-
-                // case ID_LOAD_CONFIG_BTN: 移除
                 
                 case ID_ADD_SUB_BTN:
                     AddSubscription();
@@ -495,8 +492,6 @@ void CreateControls(HWND hwnd) {
     hSaveConfigBtn = CreateWindow("BUTTON", "保存配置", WS_VISIBLE | WS_CHILD | BS_PUSHBUTTON, 0, 0, 0, 0, hwnd, (HMENU)ID_SAVE_CONFIG_BTN, NULL, NULL);
     SendMessage(hSaveConfigBtn, WM_SETFONT, (WPARAM)hFontUI, TRUE);
 
-    // hLoadConfigBtn 移除
-
     HWND hClrBtn = CreateWindow("BUTTON", "清空日志", WS_VISIBLE | WS_CHILD | BS_PUSHBUTTON, 0, 0, 0, 0, hwnd, (HMENU)ID_CLEAR_LOG_BTN, NULL, NULL);
     SendMessage(hClrBtn, WM_SETFONT, (WPARAM)hFontUI, TRUE);
 
@@ -627,7 +622,6 @@ void ResizeControls(HWND hwnd) {
     MoveWindow(hStartBtn, startX, curY, btnW, btnH, TRUE);
     MoveWindow(hStopBtn, startX + btnW + btnGap, curY, btnW, btnH, TRUE);
     MoveWindow(hSaveConfigBtn, startX + (btnW + btnGap) * 2, curY, btnW, btnH, TRUE);
-    // hLoadConfigBtn 移除，后续按钮位置调整
 
     // 清空日志按钮
     HWND hClrBtn = GetDlgItem(hwnd, ID_CLEAR_LOG_BTN);
@@ -644,14 +638,9 @@ void ResizeControls(HWND hwnd) {
     int logH = winH - curY - margin; // 日志高度根据窗口大小动态变化
 
     MoveWindow(hLogEdit, margin, curY, groupW, logH, TRUE);
-    
-    // 确保隐藏了被移除的加载配置按钮
-    HWND hLoadConfigBtn = GetDlgItem(hwnd, ID_LOAD_CONFIG_BTN);
-    if(hLoadConfigBtn) ShowWindow(hLoadConfigBtn, SW_HIDE);
 }
 
 // ============ 订阅列表文件管理 ============
-// ... (此部分代码与上一版本相同，保持不变) ...
 void SaveSubscriptionList() {
     FILE* f = fopen("subscriptions.txt", "w");
     if (!f) return;
