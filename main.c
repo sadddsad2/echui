@@ -13,7 +13,7 @@
 
 typedef BOOL (WINAPI *SetProcessDPIAwareFunc)(void);
 
-#define APP_VERSION "1.5" // 版本号升级
+#define APP_VERSION "1.2" // 版本号升级
 #define APP_TITLE "ECH workers 客户端 v" APP_VERSION
 
 #define MAX_URL_LEN 8192
@@ -550,7 +550,7 @@ void CreateControls(HWND hwnd) {
 
     hLogEdit = CreateWindow("EDIT", "", 
         WS_VISIBLE | WS_CHILD | WS_BORDER | WS_VSCROLL | ES_MULTILINE | ES_READONLY, 
-        margin, curY, winW - (margin * 2), Scale(130), hwnd, (HMENU)ID_LOG_EDIT, NULL, NULL);
+        margin, curY, winW - (margin * 2), Scale(80), hwnd, (HMENU)ID_LOG_EDIT, NULL, NULL);
     SendMessage(hLogEdit, WM_SETFONT, (WPARAM)hFontLog, TRUE);
     SendMessage(hLogEdit, EM_SETLIMITTEXT, 0, 0);
 }
