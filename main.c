@@ -501,7 +501,7 @@ void CreateControls(HWND hwnd) {
     HWND hGroup2 = CreateWindow("BUTTON", "高级选项 (可选)", WS_VISIBLE | WS_CHILD | BS_GROUPBOX,
         margin, curY, groupW, group2H, hwnd, NULL, NULL, NULL);
     SendMessage(hGroup2, WM_SETFONT, (WPARAM)hFontUI, TRUE);
-    innerY = (curY - group2H - Scale(15)) + Scale(25); // 重新计算右侧分组的起始 Y 坐标
+    curY += max(group1H, group2H) + Scale(15);
     CreateLabelAndEdit(hwnd, "身份令牌:", margin + halfGroupW + splitGap + Scale(15), innerY, halfGroupW - Scale(30), editH, ID_TOKEN_EDIT, &hTokenEdit, FALSE); // 新
     innerY += lineHeight + lineGap;
 
