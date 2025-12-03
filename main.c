@@ -1,4 +1,4 @@
-// ============ 第一部分：头文件、宏定义、全局变量、函数声明 ============
+// ============ 第一部分:头文件、宏定义、全局变量、函数声明 ============
 #pragma comment(linker,"\"/manifestdependency:type='win32' name='Microsoft.Windows.Common-Controls' version='6.0.0.0' processorArchitecture='*' publicKeyToken='6595b64144ccf1df' language='*'\"")
 
 #include <windows.h>
@@ -60,7 +60,6 @@ int Scale(int x) {
 #define ID_ADD_SUB_BTN      1019
 #define ID_DEL_SUB_BTN      1020
 #define ID_SUB_LIST         1021
-#define ID_ADD_NODE_BTN     1022
 #define ID_DEL_NODE_BTN     1023
 
 HWND hMainWindow;
@@ -68,7 +67,7 @@ HWND hConfigNameEdit, hServerEdit, hListenEdit, hTokenEdit, hIpEdit, hDnsEdit, h
 HWND hStartBtn, hStopBtn, hLogEdit, hSaveConfigBtn;
 HWND hSubscribeUrlEdit, hFetchSubBtn, hNodeList;
 HWND hAddSubBtn, hDelSubBtn, hSubList;
-HWND hAddNodeBtn, hDelNodeBtn;
+HWND hDelNodeBtn;
 
 PROCESS_INFORMATION processInfo;
 HANDLE hLogPipe = NULL;
@@ -114,7 +113,6 @@ void DelSubscription();
 void SaveSubscriptionList();
 void LoadSubscriptionList();
 
-void AddNodeManually();
 void DelSelectedNode();
 void SaveNodeConfig(int nodeIndex, BOOL isManual);
 void LoadNodeList();
@@ -237,7 +235,7 @@ void ShowTrayIcon() {
 void RemoveTrayIcon() {
     Shell_NotifyIcon(NIM_DELETE, &nid);
 }
-// ============ 第二部分：窗口过程、控件创建 ============
+// ============ 第二部分:窗口过程、控件创建 ============
 
 LRESULT CALLBACK WindowProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam) {
     switch (uMsg) {
@@ -354,10 +352,6 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam) 
 
                 case ID_FETCH_SUB_BTN:
                     FetchAllSubscriptions();
-                    break;
-
-                case ID_ADD_NODE_BTN:
-                    AddNodeManually();
                     break;
 
                 case ID_DEL_NODE_BTN:
@@ -479,12 +473,8 @@ void CreateControls(HWND hwnd) {
     HWND hNodeLabel = CreateWindow("STATIC", "节点列表(单击查看/双击启用):", WS_VISIBLE | WS_CHILD | SS_LEFT, 
         margin + Scale(15), innerY + Scale(3), Scale(200), Scale(20), hwnd, NULL, NULL, NULL);
     SendMessage(hNodeLabel, WM_SETFONT, (WPARAM)hFontUI, TRUE);
-    
-    hAddNodeBtn = CreateWindow("BUTTON", "添加当前", WS_VISIBLE | WS_CHILD | BS_PUSHBUTTON,
-        margin + groupW - Scale(220), innerY, Scale(100), Scale(20), hwnd, (HMENU)ID_ADD_NODE_BTN, NULL, NULL);
-    SendMessage(hAddNodeBtn, WM_SETFONT, (WPARAM)hFontUI, TRUE);
 
-    hDelNodeBtn = CreateWindow("BUTTON", "删除选中", WS_VISIBLE | WS_CHILD | BS_PUSHBUTTON,
+    hDelNodeBtn = CreateWindow("BUTTON", "删除选中节点", WS_VISIBLE | WS_CHILD | BS_PUSHBUTTON,
         margin + groupW - Scale(110), innerY, Scale(100), Scale(20), hwnd, (HMENU)ID_DEL_NODE_BTN, NULL, NULL);
     SendMessage(hDelNodeBtn, WM_SETFONT, (WPARAM)hFontUI, TRUE);
     
@@ -549,8 +539,8 @@ void CreateControls(HWND hwnd) {
     SendMessage(hStopBtn, WM_SETFONT, (WPARAM)hFontUI, TRUE);
     EnableWindow(hStopBtn, FALSE);
 
-    hSaveConfigBtn = CreateWindow("BUTTON", "保存配置", WS_VISIBLE | WS_CHILD | BS_PUSHBUTTON,
-        startX + (btnW + btnGap) * 2, curY, btnW, btnH, hwnd, (HMENU)ID_SAVE_CONFIG_BTN, NULL, NULL);
+    hSaveConfigBtn = CreateWindow("BUTTON", "添加当前节点到列表", WS_VISIBLE | WS_CHILD | BS_PUSHBUTTON,
+        startX + (btnW + btnGap) * 2, curY, Scale(150), btnH, hwnd, (HMENU)ID_SAVE_CONFIG_BTN, NULL, NULL);
     SendMessage(hSaveConfigBtn, WM_SETFONT, (WPARAM)hFontUI, TRUE);
 
     HWND hClrBtn = CreateWindow("BUTTON", "清空日志", WS_VISIBLE | WS_CHILD | BS_PUSHBUTTON,
@@ -571,7 +561,7 @@ void CreateControls(HWND hwnd) {
     SendMessage(hLogEdit, WM_SETFONT, (WPARAM)hFontLog, TRUE);
     SendMessage(hLogEdit, EM_SETLIMITTEXT, 0, 0);
 }
-// ============ 第三部分：进程管理、配置保存加载、节点管理 ============
+// ============ 第三部分:进程管理、配置保存加载、节点管理 ============
 
 void GetControlValues() {
     char buf[MAX_URL_LEN];
@@ -848,25 +838,6 @@ void SaveConfigToFile() {
     AppendLog("[配置] 已保存配置并添加到节点列表\r\n");
 }
 
-// 手动添加当前配置为节点
-void AddNodeManually() {
-    GetControlValues();
-    
-    if (strlen(currentConfig.configName) == 0) {
-        MessageBox(hMainWindow, "请输入配置名称", "提示", MB_OK | MB_ICONWARNING);
-        SetFocus(hConfigNameEdit);
-        return;
-    }
-    
-    if (strlen(currentConfig.server) == 0) {
-        MessageBox(hMainWindow, "请输入服务地址", "提示", MB_OK | MB_ICONWARNING);
-        SetFocus(hServerEdit);
-        return;
-    }
-    
-    SaveConfigToFile();
-}
-
 // 删除选中的节点
 void DelSelectedNode() {
     int sel = SendMessage(hNodeList, LB_GETCURSEL, 0, 0);
@@ -879,7 +850,7 @@ void DelSelectedNode() {
     SendMessage(hNodeList, LB_GETTEXT, sel, (LPARAM)nodeName);
     
     char msg[512];
-    snprintf(msg, sizeof(msg), "确定要删除节点 '%s' 吗？", nodeName);
+    snprintf(msg, sizeof(msg), "确定要删除节点 '%s' 吗?", nodeName);
     if (MessageBox(hMainWindow, msg, "确认删除", MB_YESNO | MB_ICONQUESTION) != IDYES) {
         return;
     }
@@ -897,7 +868,7 @@ void DelSelectedNode() {
     
     // 再尝试在手动节点中查找
     if (!foundFile) {
-        snprintf(fileName, sizeof(fileName), "manual_nodes/node_%d.ini", sel);
+        snprintf(fileName, sizeof(fileName), "manual_nodes/node_%d.ini", sel - g_totalNodeCount);
         if (GetFileAttributes(fileName) != INVALID_FILE_ATTRIBUTES) {
             DeleteFile(fileName);
             foundFile = TRUE;
@@ -906,6 +877,13 @@ void DelSelectedNode() {
     
     // 从列表中移除
     SendMessage(hNodeList, LB_DELETESTRING, sel, 0);
+    
+    // 更新计数
+    if (sel < g_totalNodeCount) {
+        g_totalNodeCount--;
+    } else {
+        g_manualNodeCount--;
+    }
     
     // 重新保存列表
     SaveNodeList();
@@ -973,9 +951,9 @@ void LoadNodeConfigByIndex(int nodeIndex, BOOL autoStart) {
     BOOL isUTF8 = IsUTF8File(fileName);
     FILE* f = fopen(fileName, isUTF8 ? "rb" : "r");
     
-    // 如果订阅节点不存在，尝试手动节点
+    // 如果订阅节点不存在,尝试手动节点
     if (!f) {
-        snprintf(fileName, sizeof(fileName), "manual_nodes/node_%d.ini", nodeIndex);
+        snprintf(fileName, sizeof(fileName), "manual_nodes/node_%d.ini", nodeIndex - g_totalNodeCount);
         isUTF8 = IsUTF8File(fileName);
         f = fopen(fileName, isUTF8 ? "rb" : "r");
     }
@@ -1059,7 +1037,7 @@ void SaveNodeList() {
     fputc(0xBB, f);
     fputc(0xBF, f);
     
-    // 只保存前 g_totalNodeCount 个（订阅节点）
+    // 只保存前 g_totalNodeCount 个(订阅节点)
     int count = SendMessage(hNodeList, LB_GETCOUNT, 0, 0);
     int saveCount = (count < g_totalNodeCount) ? count : g_totalNodeCount;
     
@@ -1089,7 +1067,7 @@ void SaveManualNodeList() {
     fputc(0xBB, f);
     fputc(0xBF, f);
     
-    // 保存从 g_totalNodeCount 开始的节点（手动节点）
+    // 保存从 g_totalNodeCount 开始的节点(手动节点)
     int count = SendMessage(hNodeList, LB_GETCOUNT, 0, 0);
     
     for (int i = g_totalNodeCount; i < count; i++) {
@@ -1229,6 +1207,17 @@ void AddSubscription() {
     GetWindowText(hSubscribeUrlEdit, url, sizeof(url));
     if (strlen(url) == 0) return;
     
+    // 检查是否为 ech:// 开头的节点链接
+    if (strncmp(url, "ech://", 6) == 0 || strncmp(url, "ECH://", 6) == 0) {
+        AppendLog("[节点] 检测到 ech:// 链接,直接解析为节点...\r\n");
+        ParseSubscriptionData(url);
+        SaveManualNodeList();
+        SetWindowText(hSubscribeUrlEdit, "");
+        MessageBox(hMainWindow, "节点已添加到列表", "成功", MB_OK | MB_ICONINFORMATION);
+        return;
+    }
+    
+    // 普通订阅链接处理
     if (SendMessage(hSubList, LB_FINDSTRINGEXACT, -1, (LPARAM)url) != LB_ERR) {
         MessageBox(hMainWindow, "该订阅链接已存在", "提示", MB_OK);
         return;
@@ -1246,7 +1235,7 @@ void DelSubscription() {
     SendMessage(hSubList, LB_DELETESTRING, sel, 0);
     SaveSubscriptionList();
 }
-// ============ 第四部分：编码转换、Base64解码、订阅解析 ============
+// ============ 第四部分:编码转换、Base64解码、订阅解析 ============
 
 // UTF-8 转 GBK (改进版:处理转换失败和不可映射字符)
 char* UTF8ToGBK(const char* utf8Str) {
@@ -1686,7 +1675,7 @@ void FetchAllSubscriptions() {
     AppendLog("--------------------------\r\n");
     AppendLog("[订阅] 开始更新所有订阅...\r\n");
     
-    // 只清除订阅节点部分，保留手动节点
+    // 只清除订阅节点部分,保留手动节点
     for (int i = g_totalNodeCount - 1; i >= 0; i--) {
         SendMessage(hNodeList, LB_DELETESTRING, i, 0);
     }
@@ -1702,7 +1691,7 @@ void FetchAllSubscriptions() {
     SaveNodeList();
     
     char msg[256];
-    snprintf(msg, sizeof(msg), "更新完成，共获取 %d 个订阅节点", g_totalNodeCount);
+    snprintf(msg, sizeof(msg), "更新完成,共获取 %d 个订阅节点", g_totalNodeCount);
     MessageBox(hMainWindow, msg, "订阅成功", MB_OK | MB_ICONINFORMATION);
     AppendLog("[订阅] 全部更新完成\r\n");
     AppendLog("--------------------------\r\n");
