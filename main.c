@@ -1446,11 +1446,15 @@ BOOL is_base64_encoded(const char* data) {
     return (valid_chars * 100 / len) > 90;
 }
 
-// 解析订阅数据
+// 解析订阅数据 (支持手动添加标记)
 void ParseSubscriptionData(const char* data) {
     if (!data || strlen(data) == 0) {
         return;
     }
+    
+    // 判断是否为手动添加的单个节点
+    BOOL isManualNode = (strncmp(data, "ech://", 6) == 0 || strncmp(data, "ECH://", 6) == 0) && 
+                         (strchr(data, '\n') == NULL && strchr(data, '\r') == NULL);
     
     char* dataCopy = NULL;
     if (is_base64_encoded(data)) {
@@ -1588,9 +1592,16 @@ void ParseSubscriptionData(const char* data) {
                     strcpy(currentConfig.ech, ech);
                 }
                 
-                SaveNodeConfig(g_totalNodeCount, FALSE);
+                // 根据是否为手动节点选择保存位置
+                if (isManualNode) {
+                    SaveNodeConfig(g_manualNodeCount, TRUE);
+                    g_manualNodeCount++;
+                } else {
+                    SaveNodeConfig(g_totalNodeCount, FALSE);
+                    g_totalNodeCount++;
+                }
+                
                 SendMessage(hNodeList, LB_ADDSTRING, 0, (LPARAM)nodeName);
-                g_totalNodeCount++;
                 newNodesCount++;
             }
         }
@@ -1598,9 +1609,16 @@ void ParseSubscriptionData(const char* data) {
     }
     
     free(dataCopy);
-    char logMsg[128];
-    snprintf(logMsg, sizeof(logMsg), "[订阅] 解析得到 %d 个节点\r\n", newNodesCount);
-    AppendLog(logMsg);
+    
+    if (isManualNode) {
+        char logMsg[128];
+        snprintf(logMsg, sizeof(logMsg), "[节点] 已添加手动节点\r\n");
+        AppendLog(logMsg);
+    } else {
+        char logMsg[128];
+        snprintf(logMsg, sizeof(logMsg), "[订阅] 解析得到 %d 个节点\r\n", newNodesCount);
+        AppendLog(logMsg);
+    }
 }
 
 // 处理单个订阅URL
