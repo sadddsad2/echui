@@ -1,7 +1,6 @@
 // ============ 第一部分:头文件、宏定义、全局变量、函数声明 ============
-// 注意: winsock2.h 必须在 windows.h 之前包含
-#include <winsock2.h>
-#include <ws2tcpip.h>
+#pragma comment(linker,"\"/manifestdependency:type='win32' name='Microsoft.Windows.Common-Controls' version='6.0.0.0' processorArchitecture='*' publicKeyToken='6595b64144ccf1df' language='*'\"")
+
 #include <windows.h>
 #include <commctrl.h>
 #include <shellapi.h>
@@ -15,13 +14,12 @@
 
 typedef BOOL (WINAPI *SetProcessDPIAwareFunc)(void);
 
-#define APP_VERSION "2.2"
+#define APP_VERSION "2.1"
 #define APP_TITLE "ECH 客户端 v" APP_VERSION
 
 #define MAX_URL_LEN 8192
 #define MAX_SMALL_LEN 2048
 #define MAX_CMD_LEN 32768
-#define MAX_CHINA_IPS 8000
 
 #define WM_TRAYICON (WM_USER + 1)
 #define WM_APPEND_LOG (WM_USER + 2) 
@@ -45,15 +43,9 @@ int Scale(int x) {
 
 // 节点类型枚举
 typedef enum {
-    NODE_TYPE_ECH = 0,
-    NODE_TYPE_ECHW = 1
+    NODE_TYPE_ECH = 0,   // ech-tunnel.exe
+    NODE_TYPE_ECHW = 1   // ech-workers.exe
 } NodeType;
-
-// 代理模式枚举
-typedef enum {
-    PROXY_MODE_GLOBAL = 0,      // 全局代理
-    PROXY_MODE_BYPASS_CN = 1    // 跳过中国IP
-} ProxyMode;
 
 // 主窗口控件ID
 #define ID_NODE_LIST          1003
@@ -64,12 +56,10 @@ typedef enum {
 #define ID_EDIT_NODE_BTN      1011
 #define ID_ADD_NODE_BTN       1012
 #define ID_DEL_NODE_BTN       1013
-#define ID_SUB_MANAGE_BTN     1014
-#define ID_DEL_ALL_BTN        1015
-#define ID_COPY_ALL_BTN       1016
-#define ID_PASTE_NODE_BTN     1017
-#define ID_PROXY_MODE_COMBO   1018
-#define ID_SOCKS5_PORT_EDIT   1019
+#define ID_DEL_ALL_BTN        1014  // 新增：删除全部节点
+#define ID_COPY_ALL_BTN       1015  // 新增：复制全部节点链接
+#define ID_PASTE_NODE_BTN     1016  // 新增：粘贴节点
+#define ID_SUB_MANAGE_BTN     1017  // 原订阅管理ID改为1017
 
 // 订阅管理对话框控件ID
 #define ID_SUB_URL_EDIT       3001
@@ -98,28 +88,13 @@ typedef enum {
 HWND hMainWindow;
 HWND hNodeList;
 HWND hStartBtn, hStopBtn, hLogEdit;
-HWND hEditNodeBtn, hAddNodeBtn, hDelNodeBtn, hSubManageBtn;
-HWND hDelAllBtn, hCopyAllBtn, hPasteNodeBtn;
-HWND hProxyModeCombo, hSocks5PortEdit;
+HWND hEditNodeBtn, hAddNodeBtn, hDelNodeBtn, hDelAllBtn, hCopyAllBtn, hPasteNodeBtn, hSubManageBtn;
 
 PROCESS_INFORMATION processInfo;
 HANDLE hLogPipe = NULL;
 HANDLE hLogThread = NULL;
-HANDLE hProxyThread = NULL;
 BOOL isProcessRunning = FALSE;
-BOOL isProxyRunning = FALSE;
 NOTIFYICONDATA nid;
-
-// 中国IP列表
-typedef struct {
-    unsigned int ip;
-    unsigned int mask;
-} ChinaIPRange;
-
-ChinaIPRange g_chinaIPs[MAX_CHINA_IPS];
-int g_chinaIPCount = 0;
-ProxyMode g_proxyMode = PROXY_MODE_GLOBAL;
-int g_socks5Port = 30000;
 
 typedef struct {
     char configName[MAX_SMALL_LEN];
@@ -137,10 +112,11 @@ typedef struct {
 Config currentConfig = {
     "默认配置", NODE_TYPE_ECHW, 
     "dns.alidns.com/dns-query", "cloudflare-ech.com", 
-    "example.com:443", "", "127.0.0.1:30001", 
+    "example.com:443", "", "127.0.0.1:30000", 
     3, 0, ""
 };
 
+// 用于对话框的临时配置和编辑索引
 Config tempConfig;
 int g_editingNodeIndex = -1;
 
@@ -171,9 +147,9 @@ void SaveSubscriptionList();
 void LoadSubscriptionList();
 
 void DelSelectedNode();
-void DelAllNodes();
-void CopyAllNodes();
-void PasteNodes();
+void DelAllNodes();           // 新增：删除全部节点
+void CopyAllNodeLinks();      // 新增：复制全部节点链接
+void PasteNodes();            // 新增：粘贴节点
 void SaveNodeConfig(int nodeIndex, BOOL isManual);
 void LoadNodeList();
 void SaveNodeList();
@@ -189,18 +165,12 @@ void UpdateControlsForNodeType(HWND hwndDlg, NodeType type);
 char* UTF8ToGBK(const char* utf8Str);
 char* GBKToUTF8(const char* gbkStr);
 char* URLDecode(const char* str);
+char* URLEncode(const char* str);  // 新增：URL编码
 BOOL IsUTF8File(const char* fileName);
 char* base64_decode(const char* input, size_t* out_len);
+char* base64_encode(const unsigned char* input, size_t len);  // 新增：Base64编码
 BOOL is_base64_encoded(const char* data);
-
-// SOCKS5前置代理相关
-DWORD WINAPI Socks5ProxyThread(LPVOID lpParam);
-void StartSocks5Proxy();
-void StopSocks5Proxy();
-BOOL LoadChinaIPList();
-BOOL IsChinaIP(unsigned int ip);
-unsigned int IPStringToInt(const char* ipStr);
-void DownloadChinaIPList();
+char* GenerateNodeLink(int nodeIndex);  // 新增：生成节点链接
 // ============ 第二部分:主函数和托盘图标 ============
 
 int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine, int nCmdShow) {
@@ -215,10 +185,6 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
         CloseHandle(hMutex);
         return 0; 
     }
-    
-    // 初始化Winsock
-    WSADATA wsaData;
-    WSAStartup(MAKEWORD(2, 2), &wsaData);
     
     HMODULE hUser32 = LoadLibrary("user32.dll");
     if (hUser32) {
@@ -260,7 +226,7 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
     if (!RegisterClass(&wc)) return 1;
 
     int winWidth = Scale(900);
-    int winHeight = Scale(750); 
+    int winHeight = Scale(700); 
     int screenW = GetSystemMetrics(SM_CXSCREEN);
     int screenH = GetSystemMetrics(SM_CYSCREEN);
 
@@ -291,7 +257,6 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
         }
     }
     
-    WSACleanup();
     CloseHandle(hMutex); 
     return (int)msg.wParam;
 }
@@ -323,7 +288,6 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam) 
             CreateControls(hwnd);
             LoadConfig();
             LoadSubscriptionList();
-            LoadChinaIPList();
             LoadNodeList();
             LoadManualNodeList();
             break;
@@ -337,11 +301,12 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam) 
             int winH = rect.bottom;
             int margin = Scale(15);
             
-            HDWP hdwp = BeginDeferWindowPos(25);
+            HDWP hdwp = BeginDeferWindowPos(20);
             
+            // 节点列表区域
             int curY = margin;
-            int nodeListH = winH - Scale(330);
-            if (nodeListH < Scale(280)) nodeListH = Scale(280);
+            int nodeListH = winH - Scale(280);
+            if (nodeListH < Scale(300)) nodeListH = Scale(300);
             
             HWND hGroupNode = GetDlgItem(hwnd, 5001);
             if (hGroupNode) {
@@ -349,8 +314,11 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam) 
                     winW - margin * 2, nodeListH, SWP_NOZORDER);
             }
             
+            // 按钮栏
             curY += nodeListH + Scale(10);
             int btnH = Scale(38);
+            
+            // 日志区域填充剩余空间
             curY += btnH + Scale(10);
             int logLabelH = Scale(25);
             curY += logLabelH;
@@ -437,35 +405,12 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam) 
                             MessageBox(hwnd, "请先选择一个节点", "提示", MB_OK | MB_ICONWARNING);
                             break;
                         }
-                        
-                        char portStr[16];
-                        GetWindowText(hSocks5PortEdit, portStr, sizeof(portStr));
-                        g_socks5Port = atoi(portStr);
-                        if (g_socks5Port < 1024 || g_socks5Port > 65535) {
-                            g_socks5Port = 30000;
-                        }
-                        
-                        int modeIdx = SendMessage(hProxyModeCombo, CB_GETCURSEL, 0, 0);
-                        g_proxyMode = (modeIdx == CB_ERR) ? PROXY_MODE_GLOBAL : (ProxyMode)modeIdx;
-                        
-                        if (g_proxyMode == PROXY_MODE_BYPASS_CN && g_chinaIPCount == 0) {
-                            if (MessageBox(hwnd, "中国IP列表为空,是否立即下载?\n(需要网络连接)", 
-                                "提示", MB_YESNO | MB_ICONQUESTION) == IDYES) {
-                                DownloadChinaIPList();
-                                LoadChinaIPList();
-                            }
-                        }
-                        
-                        StartSocks5Proxy();
                         LoadNodeConfigByIndex(sel, TRUE);
                     }
                     break;
 
                 case ID_STOP_BTN:
-                    if (isProcessRunning) {
-                        StopProcess();
-                        StopSocks5Proxy();
-                    }
+                    if (isProcessRunning) StopProcess();
                     break;
 
                 case ID_CLEAR_LOG_BTN:
@@ -489,7 +434,7 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam) 
                     break;
 
                 case ID_COPY_ALL_BTN:
-                    CopyAllNodes();
+                    CopyAllNodeLinks();
                     break;
 
                 case ID_PASTE_NODE_BTN:
@@ -504,19 +449,6 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam) 
                     if (HIWORD(wParam) == LBN_DBLCLK) {
                         int sel = SendMessage(hNodeList, LB_GETCURSEL, 0, 0);
                         if (sel != LB_ERR) {
-                            char portStr[16];
-                            GetWindowText(hSocks5PortEdit, portStr, sizeof(portStr));
-                            g_socks5Port = atoi(portStr);
-                            if (g_socks5Port < 1024 || g_socks5Port > 65535) {
-                                g_socks5Port = 30000;
-                            }
-                            
-                            int modeIdx = SendMessage(hProxyModeCombo, CB_GETCURSEL, 0, 0);
-                            g_proxyMode = (modeIdx == CB_ERR) ? PROXY_MODE_GLOBAL : (ProxyMode)modeIdx;
-                            
-                            if (!isProxyRunning) {
-                                StartSocks5Proxy();
-                            }
                             LoadNodeConfigByIndex(sel, TRUE);
                         }
                     }
@@ -526,7 +458,6 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam) 
 
         case WM_CLOSE:
             if (isProcessRunning) StopProcess();
-            if (isProxyRunning) StopSocks5Proxy();
             RemoveTrayIcon();
             SaveConfig();
             DestroyWindow(hwnd);
@@ -545,7 +476,7 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam) 
     }
     return 0;
 }
-// ============ 第四部分:创建控件函数 ============
+// ============ 第四部分:控件创建 ============
 
 void CreateControls(HWND hwnd) {
     RECT rect;
@@ -557,8 +488,8 @@ void CreateControls(HWND hwnd) {
     int curY = margin;
 
     // ========== 节点列表区域 ==========
-    int nodeListH = winH - Scale(330);
-    if (nodeListH < Scale(280)) nodeListH = Scale(280);
+    int nodeListH = winH - Scale(280);
+    if (nodeListH < Scale(300)) nodeListH = Scale(300);
     
     HWND hGroupNode = CreateWindow("BUTTON", "节点列表", WS_VISIBLE | WS_CHILD | BS_GROUPBOX,
         margin, curY, groupW, nodeListH, hwnd, (HMENU)5001, NULL, NULL);
@@ -569,9 +500,9 @@ void CreateControls(HWND hwnd) {
     // 节点操作按钮 - 第一行
     int btnY = innerY;
     int btnX = margin + Scale(12);
-    int btnW = Scale(95);
+    int btnW = Scale(100);
     int btnH = Scale(30);
-    int btnGap = Scale(8);
+    int btnGap = Scale(10);
 
     hEditNodeBtn = CreateWindow("BUTTON", "修改配置", WS_VISIBLE | WS_CHILD | BS_PUSHBUTTON,
         btnX, btnY, btnW, btnH, hwnd, (HMENU)ID_EDIT_NODE_BTN, NULL, NULL);
@@ -585,59 +516,38 @@ void CreateControls(HWND hwnd) {
         btnX + (btnW + btnGap) * 2, btnY, btnW, btnH, hwnd, (HMENU)ID_DEL_NODE_BTN, NULL, NULL);
     SendMessage(hDelNodeBtn, WM_SETFONT, (WPARAM)hFontUI, TRUE);
 
-    hSubManageBtn = CreateWindow("BUTTON", "订阅管理", WS_VISIBLE | WS_CHILD | BS_PUSHBUTTON,
-        btnX + (btnW + btnGap) * 3, btnY, btnW, btnH, hwnd, (HMENU)ID_SUB_MANAGE_BTN, NULL, NULL);
-    SendMessage(hSubManageBtn, WM_SETFONT, (WPARAM)hFontUI, TRUE);
-
-    // 第二行按钮
-    btnY += btnH + Scale(8);
-
+    // 新增按钮 - 删除全部
     hDelAllBtn = CreateWindow("BUTTON", "删除全部", WS_VISIBLE | WS_CHILD | BS_PUSHBUTTON,
-        btnX, btnY, btnW, btnH, hwnd, (HMENU)ID_DEL_ALL_BTN, NULL, NULL);
+        btnX + (btnW + btnGap) * 3, btnY, btnW, btnH, hwnd, (HMENU)ID_DEL_ALL_BTN, NULL, NULL);
     SendMessage(hDelAllBtn, WM_SETFONT, (WPARAM)hFontUI, TRUE);
 
+    // 节点操作按钮 - 第二行
+    btnY += btnH + Scale(8);
+
+    // 新增按钮 - 复制全部
     hCopyAllBtn = CreateWindow("BUTTON", "复制全部", WS_VISIBLE | WS_CHILD | BS_PUSHBUTTON,
-        btnX + btnW + btnGap, btnY, btnW, btnH, hwnd, (HMENU)ID_COPY_ALL_BTN, NULL, NULL);
+        btnX, btnY, btnW, btnH, hwnd, (HMENU)ID_COPY_ALL_BTN, NULL, NULL);
     SendMessage(hCopyAllBtn, WM_SETFONT, (WPARAM)hFontUI, TRUE);
 
+    // 新增按钮 - 粘贴节点
     hPasteNodeBtn = CreateWindow("BUTTON", "粘贴节点", WS_VISIBLE | WS_CHILD | BS_PUSHBUTTON,
-        btnX + (btnW + btnGap) * 2, btnY, btnW, btnH, hwnd, (HMENU)ID_PASTE_NODE_BTN, NULL, NULL);
+        btnX + btnW + btnGap, btnY, btnW, btnH, hwnd, (HMENU)ID_PASTE_NODE_BTN, NULL, NULL);
     SendMessage(hPasteNodeBtn, WM_SETFONT, (WPARAM)hFontUI, TRUE);
+
+    // 订阅管理按钮
+    hSubManageBtn = CreateWindow("BUTTON", "订阅管理", WS_VISIBLE | WS_CHILD | BS_PUSHBUTTON,
+        btnX + (btnW + btnGap) * 2, btnY, btnW, btnH, hwnd, (HMENU)ID_SUB_MANAGE_BTN, NULL, NULL);
+    SendMessage(hSubManageBtn, WM_SETFONT, (WPARAM)hFontUI, TRUE);
 
     innerY = btnY + btnH + Scale(10);
     
-    // 代理模式选择
-    HWND hProxyLabel = CreateWindow("STATIC", "代理模式:", WS_VISIBLE | WS_CHILD | SS_LEFT, 
-        margin + Scale(12), innerY + Scale(3), Scale(75), Scale(20), hwnd, NULL, NULL, NULL);
-    SendMessage(hProxyLabel, WM_SETFONT, (WPARAM)hFontUI, TRUE);
-    
-    hProxyModeCombo = CreateWindow("COMBOBOX", "", 
-        WS_VISIBLE | WS_CHILD | CBS_DROPDOWNLIST | WS_VSCROLL,
-        margin + Scale(90), innerY, Scale(130), Scale(200), hwnd, (HMENU)ID_PROXY_MODE_COMBO, NULL, NULL);
-    SendMessage(hProxyModeCombo, WM_SETFONT, (WPARAM)hFontUI, TRUE);
-    SendMessage(hProxyModeCombo, CB_ADDSTRING, 0, (LPARAM)"全局代理");
-    SendMessage(hProxyModeCombo, CB_ADDSTRING, 0, (LPARAM)"跳过中国IP");
-    SendMessage(hProxyModeCombo, CB_SETCURSEL, 0, 0);
-    
-    // SOCKS5端口设置
-    HWND hPortLabel = CreateWindow("STATIC", "前置端口:", WS_VISIBLE | WS_CHILD | SS_LEFT, 
-        margin + Scale(235), innerY + Scale(3), Scale(75), Scale(20), hwnd, NULL, NULL, NULL);
-    SendMessage(hPortLabel, WM_SETFONT, (WPARAM)hFontUI, TRUE);
-    
-    hSocks5PortEdit = CreateWindow("EDIT", "30000", 
-        WS_VISIBLE | WS_CHILD | WS_BORDER | ES_NUMBER,
-        margin + Scale(313), innerY, Scale(65), Scale(24), hwnd, (HMENU)ID_SOCKS5_PORT_EDIT, NULL, NULL);
-    SendMessage(hSocks5PortEdit, WM_SETFONT, (WPARAM)hFontUI, TRUE);
-    
-    innerY += Scale(30);
-    
-    HWND hNodeLabel = CreateWindow("STATIC", "双击节点启动代理:", WS_VISIBLE | WS_CHILD | SS_LEFT, 
+    HWND hNodeLabel = CreateWindow("STATIC", "双击节点可启动代理:", WS_VISIBLE | WS_CHILD | SS_LEFT, 
         margin + Scale(12), innerY + Scale(3), Scale(150), Scale(20), hwnd, NULL, NULL, NULL);
     SendMessage(hNodeLabel, WM_SETFONT, (WPARAM)hFontUI, TRUE);
     
     hNodeList = CreateWindow("LISTBOX", "", WS_VISIBLE | WS_CHILD | WS_BORDER | WS_VSCROLL | LBS_NOTIFY,
         margin + Scale(12), innerY + Scale(25), groupW - Scale(24), 
-        nodeListH - Scale(160), hwnd, (HMENU)ID_NODE_LIST, NULL, NULL);
+        nodeListH - Scale(133), hwnd, (HMENU)ID_NODE_LIST, NULL, NULL);
     SendMessage(hNodeList, WM_SETFONT, (WPARAM)hFontUI, TRUE);
 
     curY += nodeListH + Scale(10);
@@ -675,741 +585,20 @@ void CreateControls(HWND hwnd) {
     SendMessage(hLogEdit, WM_SETFONT, (WPARAM)hFontLog, TRUE);
     SendMessage(hLogEdit, EM_SETLIMITTEXT, 0, 0);
 }
-// ============ 第五部分:新增功能实现 ============
-
-void DelAllNodes() {
-    int count = SendMessage(hNodeList, LB_GETCOUNT, 0, 0);
-    if (count == 0) {
-        MessageBox(hMainWindow, "节点列表为空", "提示", MB_OK);
-        return;
-    }
-    
-    char msg[256];
-    snprintf(msg, sizeof(msg), "确定要删除全部 %d 个节点吗?", count);
-    if (MessageBox(hMainWindow, msg, "确认删除", MB_YESNO | MB_ICONQUESTION) != IDYES) {
-        return;
-    }
-    
-    // 删除所有节点文件
-    for (int i = 0; i < g_totalNodeCount; i++) {
-        char fileName[MAX_PATH];
-        snprintf(fileName, sizeof(fileName), "nodes/node_%d.ini", i);
-        DeleteFile(fileName);
-    }
-    
-    for (int i = 0; i < g_manualNodeCount; i++) {
-        char fileName[MAX_PATH];
-        snprintf(fileName, sizeof(fileName), "manual_nodes/node_%d.ini", i);
-        DeleteFile(fileName);
-    }
-    
-    // 清空列表
-    SendMessage(hNodeList, LB_RESETCONTENT, 0, 0);
-    g_totalNodeCount = 0;
-    g_manualNodeCount = 0;
-    
-    // 删除列表文件
-    DeleteFile("nodes/nodelist.txt");
-    DeleteFile("manual_nodes/nodelist.txt");
-    
-    AppendLog("[节点] 已删除全部节点\r\n");
-}
-
-void CopyAllNodes() {
-    int count = SendMessage(hNodeList, LB_GETCOUNT, 0, 0);
-    if (count == 0) {
-        MessageBox(hMainWindow, "节点列表为空", "提示", MB_OK);
-        return;
-    }
-    
-    // 计算需要的缓冲区大小
-    size_t bufSize = count * MAX_URL_LEN;
-    char* buffer = (char*)malloc(bufSize);
-    if (!buffer) return;
-    
-    buffer[0] = '\0';
-    int copiedCount = 0;
-    
-    // 遍历所有节点
-    for (int i = 0; i < count; i++) {
-        Config cfg;
-        char fileName[MAX_PATH];
-        
-        // 判断是订阅节点还是手动节点
-        if (i < g_totalNodeCount) {
-            snprintf(fileName, sizeof(fileName), "nodes/node_%d.ini", i);
-        } else {
-            snprintf(fileName, sizeof(fileName), "manual_nodes/node_%d.ini", i - g_totalNodeCount);
-        }
-        
-        BOOL isUTF8 = IsUTF8File(fileName);
-        FILE* f = fopen(fileName, isUTF8 ? "rb" : "r");
-        if (!f) continue;
-        
-        if (isUTF8) {
-            fseek(f, 3, SEEK_SET);
-        }
-        
-        // 初始化配置
-        memset(&cfg, 0, sizeof(Config));
-        cfg.nodeType = NODE_TYPE_ECHW;
-        cfg.connections = 3;
-        cfg.fallback = 0;
-        
-        // 读取配置
-        char line[MAX_URL_LEN];
-        while (fgets(line, sizeof(line), f)) {
-            char* val = strchr(line, '=');
-            if (!val) continue;
-            *val++ = 0;
-            
-            size_t valLen = strlen(val);
-            while (valLen > 0 && (val[valLen-1] == '\n' || val[valLen-1] == '\r')) {
-                val[--valLen] = 0;
-            }
-            
-            char* displayValue = val;
-            char* convertedValue = NULL;
-            if (isUTF8) {
-                convertedValue = UTF8ToGBK(val);
-                if (convertedValue) {
-                    displayValue = convertedValue;
-                }
-            }
-
-            if (!strcmp(line, "configName")) strcpy(cfg.configName, displayValue);
-            else if (!strcmp(line, "nodeType")) cfg.nodeType = (NodeType)atoi(displayValue);
-            else if (!strcmp(line, "server")) strcpy(cfg.server, displayValue);
-            else if (!strcmp(line, "token")) strcpy(cfg.token, displayValue);
-            else if (!strcmp(line, "ip")) strcpy(cfg.ip, displayValue);
-            else if (!strcmp(line, "dns")) strcpy(cfg.dns, displayValue);
-            else if (!strcmp(line, "ech")) strcpy(cfg.ech, displayValue);
-            else if (!strcmp(line, "connections")) cfg.connections = atoi(displayValue);
-            else if (!strcmp(line, "fallback")) cfg.fallback = atoi(displayValue);
-            
-            if (convertedValue) free(convertedValue);
-        }
-        fclose(f);
-        
-        // 构造链接格式
-        char nodeLink[MAX_URL_LEN * 2];
-        char* prefix = (cfg.nodeType == NODE_TYPE_ECH) ? "ech://" : "echw://";
-        
-        // 转换为UTF8
-        char* utf8Name = GBKToUTF8(cfg.configName);
-        char* utf8Server = GBKToUTF8(cfg.server);
-        char* utf8Token = GBKToUTF8(cfg.token);
-        char* utf8Ip = GBKToUTF8(cfg.ip);
-        char* utf8Dns = GBKToUTF8(cfg.dns);
-        char* utf8Ech = GBKToUTF8(cfg.ech);
-        
-        // URL编码名称
-        char encodedName[MAX_SMALL_LEN * 3];
-        encodedName[0] = '\0';
-        const char* name = utf8Name ? utf8Name : cfg.configName;
-        for (size_t j = 0; name[j]; j++) {
-            unsigned char c = (unsigned char)name[j];
-            if ((c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') || 
-                (c >= '0' && c <= '9') || c == '-' || c == '_' || c == '.' || c == '~') {
-                char temp[2] = {c, 0};
-                strcat(encodedName, temp);
-            } else {
-                char hex[4];
-                sprintf(hex, "%%%02X", c);
-                strcat(encodedName, hex);
-            }
-        }
-        
-        snprintf(nodeLink, sizeof(nodeLink), "%s%s|%s|%s|%s|%s|%d|%d#%s\r\n",
-            prefix,
-            utf8Server ? utf8Server : cfg.server,
-            utf8Token ? utf8Token : cfg.token,
-            utf8Ip ? utf8Ip : cfg.ip,
-            utf8Dns ? utf8Dns : cfg.dns,
-            utf8Ech ? utf8Ech : cfg.ech,
-            cfg.connections,
-            cfg.fallback,
-            encodedName);
-        
-        if (utf8Name) free(utf8Name);
-        if (utf8Server) free(utf8Server);
-        if (utf8Token) free(utf8Token);
-        if (utf8Ip) free(utf8Ip);
-        if (utf8Dns) free(utf8Dns);
-        if (utf8Ech) free(utf8Ech);
-        
-        if (strlen(buffer) + strlen(nodeLink) < bufSize - 1) {
-            strcat(buffer, nodeLink);
-            copiedCount++;
-        }
-    }
-    
-    if (copiedCount > 0) {
-        if (OpenClipboard(hMainWindow)) {
-            EmptyClipboard();
-            HGLOBAL hMem = GlobalAlloc(GMEM_MOVEABLE, strlen(buffer) + 1);
-            if (hMem) {
-                char* pMem = (char*)GlobalLock(hMem);
-                if (pMem) {
-                    strcpy(pMem, buffer);
-                    GlobalUnlock(hMem);
-                    SetClipboardData(CF_TEXT, hMem);
-                }
-            }
-            CloseClipboard();
-            
-            char msg[128];
-            snprintf(msg, sizeof(msg), "已复制 %d 个节点链接到剪贴板", copiedCount);
-            MessageBox(hMainWindow, msg, "成功", MB_OK | MB_ICONINFORMATION);
-            
-            snprintf(msg, sizeof(msg), "[节点] 已复制 %d 个节点链接\r\n", copiedCount);
-            AppendLog(msg);
-        }
-    }
-    
-    free(buffer);
-}
-
-void PasteNodes() {
-    if (!OpenClipboard(hMainWindow)) {
-        MessageBox(hMainWindow, "无法打开剪贴板", "错误", MB_OK | MB_ICONERROR);
-        return;
-    }
-    
-    HANDLE hData = GetClipboardData(CF_TEXT);
-    if (!hData) {
-        CloseClipboard();
-        MessageBox(hMainWindow, "剪贴板中没有文本数据", "提示", MB_OK);
-        return;
-    }
-    
-    char* clipText = (char*)GlobalLock(hData);
-    if (!clipText) {
-        CloseClipboard();
-        return;
-    }
-    
-    // 复制剪贴板内容
-    char* dataCopy = strdup(clipText);
-    GlobalUnlock(hData);
-    CloseClipboard();
-    
-    if (!dataCopy) return;
-    
-    // 检查是否包含节点链接
-    if (strstr(dataCopy, "ech://") || strstr(dataCopy, "ECH://") ||
-        strstr(dataCopy, "echw://") || strstr(dataCopy, "ECHW://")) {
-        
-        AppendLog("[节点] 开始解析粘贴的节点...\r\n");
-        int oldCount = g_manualNodeCount;
-        
-        ParseSubscriptionData(dataCopy);
-        SaveManualNodeList();
-        
-        int newCount = g_manualNodeCount - oldCount;
-        char msg[128];
-        snprintf(msg, sizeof(msg), "成功添加 %d 个节点", newCount);
-        MessageBox(hMainWindow, msg, "成功", MB_OK | MB_ICONINFORMATION);
-        
-        snprintf(msg, sizeof(msg), "[节点] 成功添加 %d 个节点\r\n", newCount);
-        AppendLog(msg);
-    } else {
-        MessageBox(hMainWindow, "剪贴板中没有有效的节点链接", "提示", MB_OK);
-    }
-    
-    free(dataCopy);
-}
-// ============ 第六部分:SOCKS5前置代理实现 ============
-
-SOCKET g_listenSocket = INVALID_SOCKET;
-
-unsigned int IPStringToInt(const char* ipStr) {
-    unsigned int a, b, c, d;
-    if (sscanf(ipStr, "%u.%u.%u.%u", &a, &b, &c, &d) != 4) {
-        return 0;
-    }
-    return (a << 24) | (b << 16) | (c << 8) | d;
-}
-
-BOOL IsChinaIP(unsigned int ip) {
-    for (int i = 0; i < g_chinaIPCount; i++) {
-        if ((ip & g_chinaIPs[i].mask) == g_chinaIPs[i].ip) {
-            return TRUE;
-        }
-    }
-    return FALSE;
-}
-
-BOOL IsPrivateIP(unsigned int ip) {
-    // 10.0.0.0/8
-    if ((ip & 0xFF000000) == 0x0A000000) return TRUE;
-    // 172.16.0.0/12
-    if ((ip & 0xFFF00000) == 0xAC100000) return TRUE;
-    // 192.168.0.0/16
-    if ((ip & 0xFFFF0000) == 0xC0A80000) return TRUE;
-    // 127.0.0.0/8
-    if ((ip & 0xFF000000) == 0x7F000000) return TRUE;
-    return FALSE;
-}
-
-void HandleSocks5Client(SOCKET clientSock) {
-    char buf[4096];
-    int n;
-    
-    // SOCKS5握手
-    n = recv(clientSock, buf, 2, 0);
-    if (n <= 0 || buf[0] != 0x05) {
-        closesocket(clientSock);
-        return;
-    }
-    
-    int nmethods = buf[1];
-    n = recv(clientSock, buf, nmethods, 0);
-    if (n <= 0) {
-        closesocket(clientSock);
-        return;
-    }
-    
-    // 发送无需认证
-    buf[0] = 0x05;
-    buf[1] = 0x00;
-    send(clientSock, buf, 2, 0);
-    
-    // 接收连接请求
-    n = recv(clientSock, buf, 4, 0);
-    if (n <= 0 || buf[0] != 0x05 || buf[1] != 0x01) {
-        closesocket(clientSock);
-        return;
-    }
-    
-    int atyp = buf[3];
-    char targetHost[256] = {0};
-    unsigned short targetPort = 0;
-    unsigned int targetIP = 0;
-    BOOL shouldProxy = TRUE;
-    
-    if (atyp == 0x01) {
-        // IPv4
-        n = recv(clientSock, buf, 6, 0);
-        if (n != 6) {
-            closesocket(clientSock);
-            return;
-        }
-        targetIP = (unsigned char)buf[0] << 24 | (unsigned char)buf[1] << 16 | 
-                   (unsigned char)buf[2] << 8 | (unsigned char)buf[3];
-        targetPort = ((unsigned char)buf[4] << 8) | (unsigned char)buf[5];
-        
-        sprintf(targetHost, "%d.%d.%d.%d", 
-            (unsigned char)buf[0], (unsigned char)buf[1], 
-            (unsigned char)buf[2], (unsigned char)buf[3]);
-        
-        // 判断是否需要代理
-        if (g_proxyMode == PROXY_MODE_BYPASS_CN) {
-            if (IsPrivateIP(targetIP) || IsChinaIP(targetIP)) {
-                shouldProxy = FALSE;
-            }
-        }
-    } else if (atyp == 0x03) {
-        // 域名
-        n = recv(clientSock, buf, 1, 0);
-        if (n != 1) {
-            closesocket(clientSock);
-            return;
-        }
-        int domainLen = (unsigned char)buf[0];
-        n = recv(clientSock, buf, domainLen + 2, 0);
-        if (n != domainLen + 2) {
-            closesocket(clientSock);
-            return;
-        }
-        memcpy(targetHost, buf, domainLen);
-        targetHost[domainLen] = '\0';
-        targetPort = ((unsigned char)buf[domainLen] << 8) | (unsigned char)buf[domainLen + 1];
-        
-        // 域名解析后判断
-        if (g_proxyMode == PROXY_MODE_BYPASS_CN) {
-            struct hostent* he = gethostbyname(targetHost);
-            if (he && he->h_addr_list[0]) {
-                targetIP = ntohl(*(unsigned int*)he->h_addr_list[0]);
-                if (IsPrivateIP(targetIP) || IsChinaIP(targetIP)) {
-                    shouldProxy = FALSE;
-                }
-            }
-        }
-    } else {
-        // 不支持IPv6
-        buf[0] = 0x05;
-        buf[1] = 0x08; // 不支持的地址类型
-        buf[2] = 0x00;
-        buf[3] = 0x01;
-        memset(buf + 4, 0, 6);
-        send(clientSock, buf, 10, 0);
-        closesocket(clientSock);
-        return;
-    }
-    
-    SOCKET targetSock = INVALID_SOCKET;
-    
-    if (shouldProxy) {
-        // 通过代理连接
-        targetSock = socket(AF_INET, SOCK_STREAM, 0);
-        if (targetSock == INVALID_SOCKET) {
-            buf[0] = 0x05;
-            buf[1] = 0x01; // 服务器故障
-            buf[2] = 0x00;
-            buf[3] = 0x01;
-            memset(buf + 4, 0, 6);
-            send(clientSock, buf, 10, 0);
-            closesocket(clientSock);
-            return;
-        }
-        
-        struct sockaddr_in proxyAddr;
-        proxyAddr.sin_family = AF_INET;
-        proxyAddr.sin_addr.s_addr = inet_addr("127.0.0.1");
-        proxyAddr.sin_port = htons(30001); // 连接到后端代理端口
-        
-        if (connect(targetSock, (struct sockaddr*)&proxyAddr, sizeof(proxyAddr)) != 0) {
-            buf[0] = 0x05;
-            buf[1] = 0x05; // 连接被拒
-            buf[2] = 0x00;
-            buf[3] = 0x01;
-            memset(buf + 4, 0, 6);
-            send(clientSock, buf, 10, 0);
-            closesocket(targetSock);
-            closesocket(clientSock);
-            return;
-        }
-        
-        // 通过后端代理进行SOCKS5握手
-        buf[0] = 0x05;
-        buf[1] = 0x01;
-        buf[2] = 0x00;
-        send(targetSock, buf, 3, 0);
-        
-        n = recv(targetSock, buf, 2, 0);
-        if (n != 2 || buf[0] != 0x05) {
-            closesocket(targetSock);
-            closesocket(clientSock);
-            return;
-        }
-        
-        // 发送连接请求到后端
-        if (atyp == 0x01) {
-            buf[0] = 0x05;
-            buf[1] = 0x01;
-            buf[2] = 0x00;
-            buf[3] = 0x01;
-            buf[4] = (targetIP >> 24) & 0xFF;
-            buf[5] = (targetIP >> 16) & 0xFF;
-            buf[6] = (targetIP >> 8) & 0xFF;
-            buf[7] = targetIP & 0xFF;
-            buf[8] = (targetPort >> 8) & 0xFF;
-            buf[9] = targetPort & 0xFF;
-            send(targetSock, buf, 10, 0);
-        } else {
-            int domainLen = strlen(targetHost);
-            buf[0] = 0x05;
-            buf[1] = 0x01;
-            buf[2] = 0x00;
-            buf[3] = 0x03;
-            buf[4] = domainLen;
-            memcpy(buf + 5, targetHost, domainLen);
-            buf[5 + domainLen] = (targetPort >> 8) & 0xFF;
-            buf[6 + domainLen] = targetPort & 0xFF;
-            send(targetSock, buf, 7 + domainLen, 0);
-        }
-        
-        n = recv(targetSock, buf, 10, 0);
-        if (n < 10 || buf[1] != 0x00) {
-            closesocket(targetSock);
-            closesocket(clientSock);
-            return;
-        }
-    } else {
-        // 直连
-        targetSock = socket(AF_INET, SOCK_STREAM, 0);
-        if (targetSock == INVALID_SOCKET) {
-            buf[0] = 0x05;
-            buf[1] = 0x01;
-            buf[2] = 0x00;
-            buf[3] = 0x01;
-            memset(buf + 4, 0, 6);
-            send(clientSock, buf, 10, 0);
-            closesocket(clientSock);
-            return;
-        }
-        
-        struct sockaddr_in targetAddr;
-        targetAddr.sin_family = AF_INET;
-        
-        if (atyp == 0x01) {
-            targetAddr.sin_addr.s_addr = htonl(targetIP);
-        } else {
-            struct hostent* he = gethostbyname(targetHost);
-            if (!he) {
-                closesocket(targetSock);
-                closesocket(clientSock);
-                return;
-            }
-            targetAddr.sin_addr = *(struct in_addr*)he->h_addr_list[0];
-        }
-        targetAddr.sin_port = htons(targetPort);
-        
-        if (connect(targetSock, (struct sockaddr*)&targetAddr, sizeof(targetAddr)) != 0) {
-            buf[0] = 0x05;
-            buf[1] = 0x05;
-            buf[2] = 0x00;
-            buf[3] = 0x01;
-            memset(buf + 4, 0, 6);
-            send(clientSock, buf, 10, 0);
-            closesocket(targetSock);
-            closesocket(clientSock);
-            return;
-        }
-    }
-    
-    // 返回成功
-    buf[0] = 0x05;
-    buf[1] = 0x00;
-    buf[2] = 0x00;
-    buf[3] = 0x01;
-    memset(buf + 4, 0, 6);
-    send(clientSock, buf, 10, 0);
-    
-    // 双向转发
-    fd_set fds;
-    while (1) {
-        FD_ZERO(&fds);
-        FD_SET(clientSock, &fds);
-        FD_SET(targetSock, &fds);
-        
-        struct timeval tv = {30, 0};
-        int maxfd = (clientSock > targetSock ? clientSock : targetSock) + 1;
-        
-        if (select(maxfd, &fds, NULL, NULL, &tv) <= 0) break;
-        
-        if (FD_ISSET(clientSock, &fds)) {
-            n = recv(clientSock, buf, sizeof(buf), 0);
-            if (n <= 0) break;
-            if (send(targetSock, buf, n, 0) != n) break;
-        }
-        
-        if (FD_ISSET(targetSock, &fds)) {
-            n = recv(targetSock, buf, sizeof(buf), 0);
-            if (n <= 0) break;
-            if (send(clientSock, buf, n, 0) != n) break;
-        }
-    }
-    
-    closesocket(targetSock);
-    closesocket(clientSock);
-}
-
-DWORD WINAPI Socks5ClientHandlerThread(LPVOID lpParam) {
-    SOCKET clientSock = (SOCKET)(uintptr_t)lpParam;
-    HandleSocks5Client(clientSock);
-    return 0;
-}
-
-DWORD WINAPI Socks5ProxyThread(LPVOID lpParam) {
-    (void)lpParam;
-    
-    while (isProxyRunning) {
-        SOCKET clientSock = accept(g_listenSocket, NULL, NULL);
-        if (clientSock == INVALID_SOCKET) {
-            if (isProxyRunning) {
-                Sleep(100);
-            }
-            continue;
-        }
-        
-        // 为每个客户端创建线程
-        HANDLE hThread = CreateThread(NULL, 0, 
-            Socks5ClientHandlerThread, 
-            (LPVOID)(uintptr_t)clientSock, 0, NULL);
-        if (hThread) {
-            CloseHandle(hThread);
-        } else {
-            closesocket(clientSock);
-        }
-    }
-    
-    return 0;
-}
-
-void StartSocks5Proxy() {
-    if (isProxyRunning) return;
-    
-    g_listenSocket = socket(AF_INET, SOCK_STREAM, 0);
-    if (g_listenSocket == INVALID_SOCKET) {
-        AppendLog("[代理] 创建SOCKS5监听socket失败\r\n");
-        return;
-    }
-    
-    struct sockaddr_in addr;
-    addr.sin_family = AF_INET;
-    addr.sin_addr.s_addr = inet_addr("127.0.0.1");
-    addr.sin_port = htons(g_socks5Port);
-    
-    if (bind(g_listenSocket, (struct sockaddr*)&addr, sizeof(addr)) != 0) {
-        char msg[128];
-        snprintf(msg, sizeof(msg), "[代理] 绑定端口 %d 失败,可能被占用\r\n", g_socks5Port);
-        AppendLog(msg);
-        closesocket(g_listenSocket);
-        g_listenSocket = INVALID_SOCKET;
-        return;
-    }
-    
-    if (listen(g_listenSocket, 10) != 0) {
-        AppendLog("[代理] 监听失败\r\n");
-        closesocket(g_listenSocket);
-        g_listenSocket = INVALID_SOCKET;
-        return;
-    }
-    
-    isProxyRunning = TRUE;
-    hProxyThread = CreateThread(NULL, 0, Socks5ProxyThread, NULL, 0, NULL);
-    
-    char msg[256];
-    snprintf(msg, sizeof(msg), "[代理] SOCKS5前置代理已启动 127.0.0.1:%d (%s)\r\n", 
-        g_socks5Port, g_proxyMode == PROXY_MODE_GLOBAL ? "全局代理" : "跳过中国IP");
-    AppendLog(msg);
-}
-
-void StopSocks5Proxy() {
-    if (!isProxyRunning) return;
-    
-    isProxyRunning = FALSE;
-    
-    if (g_listenSocket != INVALID_SOCKET) {
-        closesocket(g_listenSocket);
-        g_listenSocket = INVALID_SOCKET;
-    }
-    
-    if (hProxyThread) {
-        WaitForSingleObject(hProxyThread, 1000);
-        CloseHandle(hProxyThread);
-        hProxyThread = NULL;
-    }
-    
-    AppendLog("[代理] SOCKS5前置代理已停止\r\n");
-}
-// ============ 第七部分:中国IP列表管理 ============
-
-BOOL LoadChinaIPList() {
-    FILE* f = fopen("chnroute.txt", "r");
-    if (!f) {
-        AppendLog("[IP列表] 未找到chnroute.txt,将使用全局代理模式\r\n");
-        return FALSE;
-    }
-    
-    g_chinaIPCount = 0;
-    char line[256];
-    
-    while (fgets(line, sizeof(line), f) && g_chinaIPCount < MAX_CHINA_IPS) {
-        // 移除换行符
-        size_t len = strlen(line);
-        while (len > 0 && (line[len-1] == '\n' || line[len-1] == '\r')) {
-            line[--len] = '\0';
-        }
-        
-        if (len == 0 || line[0] == '#' || line[0] == ';') {
-            continue;
-        }
-        
-        // 解析IP/掩码格式: 1.0.1.0/24
-        char* slash = strchr(line, '/');
-        if (!slash) continue;
-        
-        *slash = '\0';
-        int maskBits = atoi(slash + 1);
-        if (maskBits < 0 || maskBits > 32) continue;
-        
-        unsigned int ip = IPStringToInt(line);
-        if (ip == 0) continue;
-        
-        unsigned int mask = (maskBits == 0) ? 0 : (0xFFFFFFFF << (32 - maskBits));
-        
-        g_chinaIPs[g_chinaIPCount].ip = ip & mask;
-        g_chinaIPs[g_chinaIPCount].mask = mask;
-        g_chinaIPCount++;
-    }
-    
-    fclose(f);
-    
-    char msg[128];
-    snprintf(msg, sizeof(msg), "[IP列表] 已加载 %d 条中国IP规则\r\n", g_chinaIPCount);
-    AppendLog(msg);
-    
-    return TRUE;
-}
-
-void DownloadChinaIPList() {
-    AppendLog("[IP列表] 开始下载中国IP列表...\r\n");
-    
-    const char* url = "https://raw.githubusercontent.com/mayaxcn/china-ip-list/refs/heads/master/chnroute.txt";
-    
-    HINTERNET hInternet = InternetOpen("ECHWorkerClient", INTERNET_OPEN_TYPE_PRECONFIG, NULL, NULL, 0);
-    if (!hInternet) {
-        AppendLog("[IP列表] 初始化网络失败\r\n");
-        return;
-    }
-    
-    HINTERNET hConnect = InternetOpenUrl(hInternet, url, NULL, 0, 
-        INTERNET_FLAG_RELOAD | INTERNET_FLAG_NO_CACHE_WRITE, 0);
-    
-    if (!hConnect) {
-        AppendLog("[IP列表] 连接失败,请检查网络\r\n");
-        InternetCloseHandle(hInternet);
-        return;
-    }
-    
-    FILE* f = fopen("chnroute.txt", "wb");
-    if (!f) {
-        AppendLog("[IP列表] 无法创建文件\r\n");
-        InternetCloseHandle(hConnect);
-        InternetCloseHandle(hInternet);
-        return;
-    }
-    
-    char tempBuf[4096];
-    DWORD bytesRead;
-    DWORD totalRead = 0;
-    
-    while (InternetReadFile(hConnect, tempBuf, sizeof(tempBuf), &bytesRead) && bytesRead > 0) {
-        fwrite(tempBuf, 1, bytesRead, f);
-        totalRead += bytesRead;
-    }
-    
-    fclose(f);
-    InternetCloseHandle(hConnect);
-    InternetCloseHandle(hInternet);
-    
-    if (totalRead > 0) {
-        char msg[128];
-        snprintf(msg, sizeof(msg), "[IP列表] 下载完成,共 %lu 字节\r\n", (unsigned long)totalRead);
-        AppendLog(msg);
-        MessageBox(hMainWindow, "中国IP列表下载成功", "成功", MB_OK | MB_ICONINFORMATION);
-    } else {
-        AppendLog("[IP列表] 下载失败\r\n");
-        MessageBox(hMainWindow, "下载失败,请检查网络连接", "错误", MB_OK | MB_ICONERROR);
-    }
-}
-// ============ 第八部分:对话框处理和进程控制 ============
+// ============ 第五部分:订阅管理对话框和节点编辑对话框 ============
 
 void ShowSubManageDialog() {
     DialogBox(GetModuleHandle(NULL), MAKEINTRESOURCE(3), hMainWindow, SubManageDialogProc);
 }
 
 INT_PTR CALLBACK SubManageDialogProc(HWND hwndDlg, UINT uMsg, WPARAM wParam, LPARAM lParam) {
-    (void)lParam; // 未使用的参数
     static HWND hSubUrlEdit, hSubList;
     
     switch (uMsg) {
         case WM_INITDIALOG: {
             SetWindowText(hwndDlg, "订阅管理");
             
+            // 居中窗口
             int dlgW = Scale(580);
             int dlgH = Scale(380);
             int screenW = GetSystemMetrics(SM_CXSCREEN);
@@ -1422,6 +611,7 @@ INT_PTR CALLBACK SubManageDialogProc(HWND hwndDlg, UINT uMsg, WPARAM wParam, LPA
             int btnH = Scale(32);
             int y = margin;
             
+            // 订阅链接输入
             HWND hLabel = CreateWindow("STATIC", "订阅链接:", WS_VISIBLE | WS_CHILD | SS_LEFT,
                 margin, y + Scale(4), Scale(80), Scale(20), hwndDlg, NULL, NULL, NULL);
             SendMessage(hLabel, WM_SETFONT, (WPARAM)hFontUI, TRUE);
@@ -1436,12 +626,14 @@ INT_PTR CALLBACK SubManageDialogProc(HWND hwndDlg, UINT uMsg, WPARAM wParam, LPA
             
             y += editH + Scale(15);
             
+            // 订阅列表
             hSubList = CreateWindow("LISTBOX", "", WS_VISIBLE | WS_CHILD | WS_BORDER | WS_VSCROLL | LBS_NOTIFY,
                 margin, y, dlgW - margin * 2 - Scale(10), Scale(200), hwndDlg, (HMENU)ID_SUB_LIST, NULL, NULL);
             SendMessage(hSubList, WM_SETFONT, (WPARAM)hFontUI, TRUE);
             
             y += Scale(200) + Scale(15);
             
+            // 操作按钮
             int btnW = Scale(110);
             int btnX = margin;
             
@@ -1457,6 +649,7 @@ INT_PTR CALLBACK SubManageDialogProc(HWND hwndDlg, UINT uMsg, WPARAM wParam, LPA
                 dlgW - margin - btnW - Scale(5), y, btnW, btnH, hwndDlg, (HMENU)ID_SUB_CLOSE_BTN, NULL, NULL);
             SendMessage(hCloseBtn, WM_SETFONT, (WPARAM)hFontUI, TRUE);
             
+            // 加载订阅列表
             FILE* f = fopen("subscriptions.txt", "r");
             if (f) {
                 char line[MAX_URL_LEN];
@@ -1477,17 +670,20 @@ INT_PTR CALLBACK SubManageDialogProc(HWND hwndDlg, UINT uMsg, WPARAM wParam, LPA
         
         case WM_COMMAND:
             switch (LOWORD(wParam)) {
-                case ID_SUB_ADD_BTN:
+                case ID_SUB_ADD_BTN: {
                     AddSubscription(hwndDlg);
                     break;
+                }
                 
-                case ID_SUB_DEL_BTN:
+                case ID_SUB_DEL_BTN: {
                     DelSubscription(hwndDlg);
                     break;
+                }
                 
-                case ID_SUB_FETCH_BTN:
+                case ID_SUB_FETCH_BTN: {
                     FetchAllSubscriptions();
                     break;
+                }
                 
                 case ID_SUB_LIST:
                     if (HIWORD(wParam) == LBN_SELCHANGE) {
@@ -1534,7 +730,7 @@ void ShowAddNodeDialog() {
     strcpy(tempConfig.ech, "cloudflare-ech.com");
     strcpy(tempConfig.server, "");
     strcpy(tempConfig.ip, "");
-    strcpy(tempConfig.listen, "127.0.0.1:30001");
+    strcpy(tempConfig.listen, "127.0.0.1:30000");
     tempConfig.connections = 3;
     tempConfig.fallback = 0;
     strcpy(tempConfig.token, "");
@@ -1654,6 +850,7 @@ void CreateDialogControls(HWND hwndDlg) {
         btnX + btnW + Scale(15), y, btnW, btnH, hwndDlg, (HMENU)ID_DLG_CANCEL_BTN, NULL, NULL);
     SendMessage(hCancelBtn, WM_SETFONT, (WPARAM)hFontUI, TRUE);
 }
+// ============ 第六部分:对话框处理函数和进程控制 ============
 
 void SetDialogValues(HWND hwndDlg) {
     SetDlgItemText(hwndDlg, ID_DLG_CONFIG_NAME_EDIT, tempConfig.configName);
@@ -1723,10 +920,8 @@ void UpdateControlsForNodeType(HWND hwndDlg, NodeType type) {
         EnableWindow(hEch, TRUE);
     }
 }
-// ============ 第九部分:编辑和添加节点对话框处理 ============
 
 INT_PTR CALLBACK EditNodeDialogProc(HWND hwndDlg, UINT uMsg, WPARAM wParam, LPARAM lParam) {
-    (void)lParam; // 未使用的参数
     switch (uMsg) {
         case WM_INITDIALOG: {
             SetWindowText(hwndDlg, "修改节点配置");
@@ -1829,7 +1024,6 @@ INT_PTR CALLBACK EditNodeDialogProc(HWND hwndDlg, UINT uMsg, WPARAM wParam, LPAR
 }
 
 INT_PTR CALLBACK AddNodeDialogProc(HWND hwndDlg, UINT uMsg, WPARAM wParam, LPARAM lParam) {
-    (void)lParam; // 未使用的参数
     switch (uMsg) {
         case WM_INITDIALOG: {
             SetWindowText(hwndDlg, "添加新节点");
@@ -1921,6 +1115,7 @@ INT_PTR CALLBACK AddNodeDialogProc(HWND hwndDlg, UINT uMsg, WPARAM wParam, LPARA
     }
     return FALSE;
 }
+// ============ 第七部分:进程控制和日志函数 ============
 
 void StartProcess() {
     char cmdLine[MAX_CMD_LEN];
@@ -2154,15 +1349,14 @@ void AppendLog(const char* text) {
     SendMessage(hLogEdit, EM_SETSEL, len, len);
     SendMessage(hLogEdit, EM_REPLACESEL, FALSE, (LPARAM)text);
 }
-// ============ 第十部分:配置管理、订阅管理和编码转换(最后部分) ============
+// ============ 第八部分:配置管理、订阅管理 ============
 
 void SaveConfig() {
     FILE* f = fopen("config.ini", "w");
     if (!f) return;
-    fprintf(f, "[ECHTunnel]\nconfigName=%s\nnodeType=%d\nserver=%s\nlisten=%s\ntoken=%s\nip=%s\ndns=%s\nech=%s\nconnections=%d\nfallback=%d\nproxyMode=%d\nsocks5Port=%d\n",
+    fprintf(f, "[ECHTunnel]\nconfigName=%s\nnodeType=%d\nserver=%s\nlisten=%s\ntoken=%s\nip=%s\ndns=%s\nech=%s\nconnections=%d\nfallback=%d\n",
         currentConfig.configName, currentConfig.nodeType, currentConfig.server, currentConfig.listen, currentConfig.token, 
-        currentConfig.ip, currentConfig.dns, currentConfig.ech, currentConfig.connections, currentConfig.fallback,
-        g_proxyMode, g_socks5Port);
+        currentConfig.ip, currentConfig.dns, currentConfig.ech, currentConfig.connections, currentConfig.fallback);
     fclose(f);
 }
 
@@ -2186,26 +1380,8 @@ void LoadConfig() {
         else if (!strcmp(line, "ech")) strcpy(currentConfig.ech, val);
         else if (!strcmp(line, "connections")) currentConfig.connections = atoi(val);
         else if (!strcmp(line, "fallback")) currentConfig.fallback = atoi(val);
-        else if (!strcmp(line, "proxyMode")) {
-            g_proxyMode = (ProxyMode)atoi(val);
-            if (g_proxyMode < 0 || g_proxyMode > 1) g_proxyMode = PROXY_MODE_GLOBAL;
-        }
-        else if (!strcmp(line, "socks5Port")) {
-            g_socks5Port = atoi(val);
-            if (g_socks5Port < 1024 || g_socks5Port > 65535) g_socks5Port = 30000;
-        }
     }
     fclose(f);
-    
-    // 设置界面控件
-    if (hProxyModeCombo) {
-        SendMessage(hProxyModeCombo, CB_SETCURSEL, g_proxyMode, 0);
-    }
-    if (hSocks5PortEdit) {
-        char portStr[16];
-        sprintf(portStr, "%d", g_socks5Port);
-        SetWindowText(hSocks5PortEdit, portStr);
-    }
 }
 
 void AddSubscription(HWND hwndDlg) {
@@ -2247,11 +1423,14 @@ void SaveSubscriptionList() {
     FILE* f = fopen("subscriptions.txt", "w");
     if (!f) return;
     
+    int count = SendMessage(hNodeList, LB_GETCOUNT, 0, 0);
+    
+    // 从订阅管理对话框读取,如果对话框不存在则从文件读取
     HWND hSubDlg = FindWindow(NULL, "订阅管理");
     if (hSubDlg) {
         HWND hSubList = GetDlgItem(hSubDlg, ID_SUB_LIST);
         if (hSubList) {
-            int count = SendMessage(hSubList, LB_GETCOUNT, 0, 0);
+            count = SendMessage(hSubList, LB_GETCOUNT, 0, 0);
             for (int i = 0; i < count; i++) {
                 char url[MAX_URL_LEN];
                 int len = SendMessage(hSubList, LB_GETTEXT, i, (LPARAM)url);
@@ -2315,6 +1494,262 @@ void DelSelectedNode() {
     snprintf(logMsg, sizeof(logMsg), "[节点] 已删除节点: %s\r\n", nodeName);
     AppendLog(logMsg);
 }
+
+// 新增函数：删除全部节点
+void DelAllNodes() {
+    int count = SendMessage(hNodeList, LB_GETCOUNT, 0, 0);
+    if (count == 0) {
+        MessageBox(hMainWindow, "节点列表为空", "提示", MB_OK);
+        return;
+    }
+    
+    char msg[256];
+    snprintf(msg, sizeof(msg), "确定要删除全部 %d 个节点吗?\n此操作不可恢复!", count);
+    if (MessageBox(hMainWindow, msg, "确认删除全部", MB_YESNO | MB_ICONWARNING) != IDYES) {
+        return;
+    }
+    
+    // 删除所有订阅节点文件
+    for (int i = 0; i < g_totalNodeCount; i++) {
+        char fileName[MAX_PATH];
+        snprintf(fileName, sizeof(fileName), "nodes/node_%d.ini", i);
+        DeleteFile(fileName);
+    }
+    
+    // 删除所有手动节点文件
+    for (int i = 0; i < g_manualNodeCount; i++) {
+        char fileName[MAX_PATH];
+        snprintf(fileName, sizeof(fileName), "manual_nodes/node_%d.ini", i);
+        DeleteFile(fileName);
+    }
+    
+    // 清空列表
+    SendMessage(hNodeList, LB_RESETCONTENT, 0, 0);
+    
+    g_totalNodeCount = 0;
+    g_manualNodeCount = 0;
+    
+    SaveNodeList();
+    SaveManualNodeList();
+    
+    AppendLog("[节点] 已删除全部节点\r\n");
+    MessageBox(hMainWindow, "已删除全部节点", "完成", MB_OK | MB_ICONINFORMATION);
+}
+
+// 新增函数：生成节点链接
+char* GenerateNodeLink(int nodeIndex) {
+    char fileName[MAX_PATH];
+    snprintf(fileName, sizeof(fileName), "nodes/node_%d.ini", nodeIndex);
+    BOOL isUTF8 = IsUTF8File(fileName);
+    FILE* f = fopen(fileName, isUTF8 ? "rb" : "r");
+    
+    if (!f) {
+        snprintf(fileName, sizeof(fileName), "manual_nodes/node_%d.ini", nodeIndex - g_totalNodeCount);
+        isUTF8 = IsUTF8File(fileName);
+        f = fopen(fileName, isUTF8 ? "rb" : "r");
+    }
+    
+    if (!f) return NULL;
+    
+    if (isUTF8) {
+        fseek(f, 3, SEEK_SET);
+    }
+    
+    Config nodeConfig = {0};
+    strcpy(nodeConfig.dns, "dns.alidns.com/dns-query");
+    strcpy(nodeConfig.ech, "cloudflare-ech.com");
+    nodeConfig.connections = 3;
+    
+    char line[MAX_URL_LEN];
+    while (fgets(line, sizeof(line), f)) {
+        char* val = strchr(line, '=');
+        if (!val) continue;
+        *val++ = 0;
+        
+        size_t valLen = strlen(val);
+        while (valLen > 0 && (val[valLen-1] == '\n' || val[valLen-1] == '\r')) {
+            val[--valLen] = 0;
+        }
+        
+        char* displayValue = val;
+        char* convertedValue = NULL;
+        if (isUTF8) {
+            convertedValue = UTF8ToGBK(val);
+            if (convertedValue) {
+                displayValue = convertedValue;
+            }
+        }
+
+        if (!strcmp(line, "configName")) strcpy(nodeConfig.configName, displayValue);
+        else if (!strcmp(line, "nodeType")) nodeConfig.nodeType = (NodeType)atoi(displayValue);
+        else if (!strcmp(line, "server")) strcpy(nodeConfig.server, displayValue);
+        else if (!strcmp(line, "token")) strcpy(nodeConfig.token, displayValue);
+        else if (!strcmp(line, "ip")) strcpy(nodeConfig.ip, displayValue);
+        else if (!strcmp(line, "dns")) strcpy(nodeConfig.dns, displayValue);
+        else if (!strcmp(line, "ech")) strcpy(nodeConfig.ech, displayValue);
+        else if (!strcmp(line, "connections")) nodeConfig.connections = atoi(displayValue);
+        else if (!strcmp(line, "fallback")) nodeConfig.fallback = atoi(displayValue);
+        
+        if (convertedValue) free(convertedValue);
+    }
+    fclose(f);
+    
+    // 生成链接格式: ech://server|token|ip|dns|ech|connections|fallback#name
+    // 或 echw://server|token|ip|dns|ech#name
+    char* link = (char*)malloc(MAX_URL_LEN * 2);
+    if (!link) return NULL;
+    
+    char* utf8Name = GBKToUTF8(nodeConfig.configName);
+    char* encodedName = URLEncode(utf8Name ? utf8Name : nodeConfig.configName);
+    
+    if (nodeConfig.nodeType == NODE_TYPE_ECH) {
+        snprintf(link, MAX_URL_LEN * 2, "ech://%s|%s|%s|%s|%s|%d|%d#%s",
+            nodeConfig.server,
+            nodeConfig.token,
+            nodeConfig.ip,
+            nodeConfig.dns,
+            nodeConfig.ech,
+            nodeConfig.connections,
+            nodeConfig.fallback,
+            encodedName ? encodedName : nodeConfig.configName);
+    } else {
+        snprintf(link, MAX_URL_LEN * 2, "echw://%s|%s|%s|%s|%s#%s",
+            nodeConfig.server,
+            nodeConfig.token,
+            nodeConfig.ip,
+            nodeConfig.dns,
+            nodeConfig.ech,
+            encodedName ? encodedName : nodeConfig.configName);
+    }
+    
+    if (utf8Name) free(utf8Name);
+    if (encodedName) free(encodedName);
+    
+    return link;
+}
+
+// 新增函数：复制全部节点链接
+void CopyAllNodeLinks() {
+    int count = SendMessage(hNodeList, LB_GETCOUNT, 0, 0);
+    if (count == 0) {
+        MessageBox(hMainWindow, "节点列表为空", "提示", MB_OK);
+        return;
+    }
+    
+    AppendLog("[节点] 正在生成节点链接...\r\n");
+    
+    size_t totalSize = count * MAX_URL_LEN * 2;
+    char* allLinks = (char*)malloc(totalSize);
+    if (!allLinks) {
+        AppendLog("[错误] 内存分配失败\r\n");
+        return;
+    }
+    
+    allLinks[0] = '\0';
+    int successCount = 0;
+    
+    for (int i = 0; i < count; i++) {
+        char* link = GenerateNodeLink(i);
+        if (link) {
+            if (strlen(allLinks) > 0) {
+                strcat(allLinks, "\r\n");
+            }
+            strcat(allLinks, link);
+            free(link);
+            successCount++;
+        }
+    }
+    
+    if (successCount == 0) {
+        free(allLinks);
+        AppendLog("[错误] 无法生成节点链接\r\n");
+        MessageBox(hMainWindow, "无法生成节点链接", "错误", MB_OK | MB_ICONERROR);
+        return;
+    }
+    
+    // 复制到剪贴板
+    if (OpenClipboard(hMainWindow)) {
+        EmptyClipboard();
+        
+        size_t len = strlen(allLinks);
+        HGLOBAL hMem = GlobalAlloc(GMEM_MOVEABLE, len + 1);
+        if (hMem) {
+            char* pMem = (char*)GlobalLock(hMem);
+            if (pMem) {
+                memcpy(pMem, allLinks, len + 1);
+                GlobalUnlock(hMem);
+                SetClipboardData(CF_TEXT, hMem);
+            }
+        }
+        CloseClipboard();
+        
+        char logMsg[256];
+        snprintf(logMsg, sizeof(logMsg), "[节点] 已复制 %d 个节点链接到剪贴板\r\n", successCount);
+        AppendLog(logMsg);
+        
+        char msg[256];
+        snprintf(msg, sizeof(msg), "已复制 %d 个节点链接到剪贴板", successCount);
+        MessageBox(hMainWindow, msg, "成功", MB_OK | MB_ICONINFORMATION);
+    } else {
+        AppendLog("[错误] 无法打开剪贴板\r\n");
+    }
+    
+    free(allLinks);
+}
+
+// 新增函数：粘贴节点
+void PasteNodes() {
+    if (!OpenClipboard(hMainWindow)) {
+        AppendLog("[错误] 无法打开剪贴板\r\n");
+        MessageBox(hMainWindow, "无法打开剪贴板", "错误", MB_OK | MB_ICONERROR);
+        return;
+    }
+    
+    HANDLE hData = GetClipboardData(CF_TEXT);
+    if (!hData) {
+        CloseClipboard();
+        AppendLog("[提示] 剪贴板中没有文本数据\r\n");
+        MessageBox(hMainWindow, "剪贴板中没有文本数据", "提示", MB_OK);
+        return;
+    }
+    
+    char* clipText = (char*)GlobalLock(hData);
+    if (!clipText) {
+        CloseClipboard();
+        return;
+    }
+    
+    char* textCopy = strdup(clipText);
+    GlobalUnlock(hData);
+    CloseClipboard();
+    
+    if (!textCopy) return;
+    
+    AppendLog("[节点] 开始解析粘贴的节点...\r\n");
+    
+    int beforeCount = g_totalNodeCount + g_manualNodeCount;
+    ParseSubscriptionData(textCopy);
+    int afterCount = g_totalNodeCount + g_manualNodeCount;
+    int addedCount = afterCount - beforeCount;
+    
+    free(textCopy);
+    
+    SaveManualNodeList();
+    
+    if (addedCount > 0) {
+        char logMsg[256];
+        snprintf(logMsg, sizeof(logMsg), "[节点] 成功添加 %d 个节点\r\n", addedCount);
+        AppendLog(logMsg);
+        
+        char msg[256];
+        snprintf(msg, sizeof(msg), "成功添加 %d 个节点", addedCount);
+        MessageBox(hMainWindow, msg, "成功", MB_OK | MB_ICONINFORMATION);
+    } else {
+        AppendLog("[提示] 未识别到有效的节点链接\r\n");
+        MessageBox(hMainWindow, "未识别到有效的节点链接", "提示", MB_OK);
+    }
+}
+// ============ 第九部分:节点配置保存和加载 ============
 
 void SaveNodeConfig(int nodeIndex, BOOL isManual) {
     if (isManual) {
@@ -2583,6 +2018,7 @@ void LoadManualNodeList() {
         AppendLog(logMsg);
     }
 }
+// ============ 第十部分:编码转换函数 ============
 
 char* UTF8ToGBK(const char* utf8Str) {
     if (!utf8Str || strlen(utf8Str) == 0) return strdup("");
@@ -2672,6 +2108,32 @@ char* URLDecode(const char* str) {
     return decoded;
 }
 
+// 新增函数：URL编码
+char* URLEncode(const char* str) {
+    if (!str) return NULL;
+    
+    size_t len = strlen(str);
+    char* encoded = (char*)malloc(len * 3 + 1);
+    if (!encoded) return NULL;
+    
+    size_t j = 0;
+    for (size_t i = 0; i < len; i++) {
+        unsigned char c = (unsigned char)str[i];
+        if ((c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') || 
+            (c >= '0' && c <= '9') || c == '-' || c == '_' || c == '.' || c == '~') {
+            encoded[j++] = c;
+        } else if (c == ' ') {
+            encoded[j++] = '+';
+        } else {
+            sprintf(encoded + j, "%%%02X", c);
+            j += 3;
+        }
+    }
+    encoded[j] = '\0';
+    
+    return encoded;
+}
+
 BOOL IsUTF8File(const char* fileName) {
     FILE* f = fopen(fileName, "rb");
     if (!f) return FALSE;
@@ -2686,8 +2148,7 @@ BOOL IsUTF8File(const char* fileName) {
     
     return FALSE;
 }
-
-// ============ 第十一部分:Base64解码和订阅解析(补充) ============
+// ============ 第十一部分:Base64编码解码 ============
 
 char* base64_decode(const char* input, size_t* out_len) {
     static const unsigned char base64_table[256] = {
@@ -2749,6 +2210,58 @@ char* base64_decode(const char* input, size_t* out_len) {
     return output;
 }
 
+// 新增函数：Base64编码
+char* base64_encode(const unsigned char* input, size_t len) {
+    static const char base64_chars[] = 
+        "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    
+    if (!input || len == 0) return NULL;
+    
+    size_t output_len = 4 * ((len + 2) / 3);
+    char* output = (char*)malloc(output_len + 1);
+    if (!output) return NULL;
+    
+    size_t i = 0, j = 0;
+    unsigned char a3[3];
+    unsigned char a4[4];
+    
+    while (len--) {
+        a3[i++] = *(input++);
+        if (i == 3) {
+            a4[0] = (a3[0] & 0xfc) >> 2;
+            a4[1] = ((a3[0] & 0x03) << 4) + ((a3[1] & 0xf0) >> 4);
+            a4[2] = ((a3[1] & 0x0f) << 2) + ((a3[2] & 0xc0) >> 6);
+            a4[3] = a3[2] & 0x3f;
+            
+            for (i = 0; i < 4; i++) {
+                output[j++] = base64_chars[a4[i]];
+            }
+            i = 0;
+        }
+    }
+    
+    if (i) {
+        for (size_t k = i; k < 3; k++) {
+            a3[k] = '\0';
+        }
+        
+        a4[0] = (a3[0] & 0xfc) >> 2;
+        a4[1] = ((a3[0] & 0x03) << 4) + ((a3[1] & 0xf0) >> 4);
+        a4[2] = ((a3[1] & 0x0f) << 2) + ((a3[2] & 0xc0) >> 6);
+        
+        for (size_t k = 0; k < i + 1; k++) {
+            output[j++] = base64_chars[a4[k]];
+        }
+        
+        while (i++ < 3) {
+            output[j++] = '=';
+        }
+    }
+    
+    output[j] = '\0';
+    return output;
+}
+
 BOOL is_base64_encoded(const char* data) {
     if (!data || strlen(data) == 0) return FALSE;
     
@@ -2773,6 +2286,7 @@ BOOL is_base64_encoded(const char* data) {
     
     return (valid_chars * 100 / len) > 90;
 }
+// ============ 第十二部分:订阅解析函数 ============
 
 void ParseSubscriptionData(const char* data) {
     if (!data || strlen(data) == 0) {
@@ -2933,7 +2447,6 @@ void ParseSubscriptionData(const char* data) {
                 
                 currentConfig.connections = connections;
                 currentConfig.fallback = fallback;
-                strcpy(currentConfig.listen, "127.0.0.1:30001");
                 
                 if (isManualNode) {
                     SaveNodeConfig(g_manualNodeCount, TRUE);
