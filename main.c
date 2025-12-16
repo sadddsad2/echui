@@ -60,7 +60,7 @@ typedef enum {
 #define ID_COPY_ALL_BTN       1015  // 新增：复制全部节点链接
 #define ID_PASTE_NODE_BTN     1016  // 新增：粘贴节点
 #define ID_SUB_MANAGE_BTN     1017  // 原订阅管理ID改为1017
-
+#define ID_LOG_LABEL          1018  // 新增：日志标签ID
 // 订阅管理对话框控件ID
 #define ID_SUB_URL_EDIT       3001
 #define ID_SUB_ADD_BTN        3002
@@ -377,10 +377,15 @@ case WM_SIZE: {
                     winW - margin - btnW, curY, btnW, btnH, SWP_NOZORDER);
             }
             
-            // ========== 日志区域 ==========
+           // ========== 日志区域 ==========
             curY += btnH + Scale(10);
             
-            // 日志标签（可选调整，因为静态文本通常不需要精确调整）
+            // 日志标签
+            HWND hLogLabel = GetDlgItem(hwnd, ID_LOG_LABEL);
+            if (hLogLabel) {
+                DeferWindowPos(hdwp, hLogLabel, NULL, margin, curY, 
+                    Scale(100), Scale(20), SWP_NOZORDER);
+            }
             curY += logLabelH;
             
             // 日志编辑框 - 自适应填充剩余空间
@@ -636,7 +641,7 @@ void CreateControls(HWND hwnd) {
 
     // ========== 日志区域 ==========
     HWND hLogLabel = CreateWindow("STATIC", "运行日志:", WS_VISIBLE | WS_CHILD, 
-        margin, curY, Scale(100), Scale(20), hwnd, NULL, NULL, NULL);
+        margin, curY, Scale(100), Scale(20), hwnd, (HMENU)ID_LOG_LABEL, NULL, NULL);
     SendMessage(hLogLabel, WM_SETFONT, (WPARAM)hFontUI, TRUE);
     
     curY += Scale(25);
