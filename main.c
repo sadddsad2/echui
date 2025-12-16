@@ -1043,7 +1043,7 @@ INT_PTR CALLBACK EditNodeDialogProc(HWND hwndDlg, UINT uMsg, WPARAM wParam, LPAR
                     break;
                 }
                 
-                case ID_DLG_OK_BTN: {
+case ID_DLG_OK_BTN: {
                     GetDialogValues(hwndDlg);
                     
                     if (strlen(tempConfig.configName) == 0) {
@@ -1056,23 +1056,47 @@ INT_PTR CALLBACK EditNodeDialogProc(HWND hwndDlg, UINT uMsg, WPARAM wParam, LPAR
                         return TRUE;
                     }
                     
-                    memcpy(&currentConfig, &tempConfig, sizeof(Config));
-                    
-                    BOOL isManual = (g_editingNodeIndex >= g_totalNodeCount);
-                    int fileIndex = isManual ? (g_editingNodeIndex - g_totalNodeCount) : g_editingNodeIndex;
-                    SaveNodeConfig(fileIndex, isManual);
-                    
-                    SendMessage(hNodeList, LB_DELETESTRING, g_editingNodeIndex, 0);
-                    SendMessage(hNodeList, LB_INSERTSTRING, g_editingNodeIndex, (LPARAM)currentConfig.configName);
-                    SendMessage(hNodeList, LB_SETCURSEL, g_editingNodeIndex, 0);
-                    
-                    if (isManual) {
-                        SaveManualNodeList();
-                    } else {
-                        SaveNodeList();
+                    // 检查是否存在同名节点
+                    int existingIndex = -1;
+                    int totalCount = SendMessage(hNodeList, LB_GETCOUNT, 0, 0);
+                    for (int i = 0; i < totalCount; i++) {
+                        char nodeName[MAX_SMALL_LEN];
+                        SendMessage(hNodeList, LB_GETTEXT, i, (LPARAM)nodeName);
+                        if (strcmp(nodeName, tempConfig.configName) == 0) {
+                            existingIndex = i;
+                            break;
+                        }
                     }
                     
-                    AppendLog("[配置] 节点配置已更新\r\n");
+                    memcpy(&currentConfig, &tempConfig, sizeof(Config));
+                    
+                    if (existingIndex >= 0) {
+                        // 存在同名节点，覆盖
+                        BOOL isManual = (existingIndex >= g_totalNodeCount);
+                        int fileIndex = isManual ? (existingIndex - g_totalNodeCount) : existingIndex;
+                        SaveNodeConfig(fileIndex, isManual);
+                        
+                        // 更新列表显示
+                        SendMessage(hNodeList, LB_DELETESTRING, existingIndex, 0);
+                        SendMessage(hNodeList, LB_INSERTSTRING, existingIndex, (LPARAM)currentConfig.configName);
+                        SendMessage(hNodeList, LB_SETCURSEL, existingIndex, 0);
+                        
+                        if (isManual) {
+                            SaveManualNodeList();
+                        } else {
+                            SaveNodeList();
+                        }
+                        
+                        AppendLog("[配置] 节点已覆盖更新\r\n");
+                    } else {
+                        // 不存在同名节点，新增
+                        SaveNodeConfig(g_manualNodeCount, TRUE);
+                        SendMessage(hNodeList, LB_ADDSTRING, 0, (LPARAM)currentConfig.configName);
+                        g_manualNodeCount++;
+                        SaveManualNodeList();
+                        AppendLog("[配置] 新节点已添加\r\n");
+                    }
+                    
                     EndDialog(hwndDlg, IDOK);
                     return TRUE;
                 }
@@ -2492,8 +2516,7 @@ void ParseSubscriptionData(const char* data) {
                     nodeName[MAX_SMALL_LEN - 1] = '\0';
                 }
             }
-            
-            if (strlen(nodeName) > 0 && strlen(server) > 0) {
+if (strlen(nodeName) > 0 && strlen(server) > 0) {
                 strcpy(currentConfig.configName, nodeName);
                 currentConfig.nodeType = nodeType;
                 strcpy(currentConfig.server, server);
@@ -2515,17 +2538,48 @@ void ParseSubscriptionData(const char* data) {
                 currentConfig.connections = connections;
                 currentConfig.fallback = fallback;
                 
-                if (isManualNode) {
-                    SaveNodeConfig(g_manualNodeCount, TRUE);
-                    g_manualNodeCount++;
-                } else {
-                    SaveNodeConfig(g_totalNodeCount, FALSE);
-                    g_totalNodeCount++;
+                // 检查是否存在同名节点
+                int existingIndex = -1;
+                int totalCount = SendMessage(hNodeList, LB_GETCOUNT, 0, 0);
+                for (int i = 0; i < totalCount; i++) {
+                    char existingName[MAX_SMALL_LEN];
+                    SendMessage(hNodeList, LB_GETTEXT, i, (LPARAM)existingName);
+                    if (strcmp(existingName, nodeName) == 0) {
+                        existingIndex = i;
+                        break;
+                    }
                 }
                 
-                SendMessage(hNodeList, LB_ADDSTRING, 0, (LPARAM)nodeName);
-                newNodesCount++;
-            }
+                if (existingIndex >= 0) {
+                    // 存在同名节点，覆盖
+                    BOOL isExistingManual = (existingIndex >= g_totalNodeCount);
+                    int fileIndex = isExistingManual ? (existingIndex - g_totalNodeCount) : existingIndex;
+                    
+                    if (isManualNode) {
+                        // 新节点是手动节点，覆盖到手动节点
+                        SaveNodeConfig(fileIndex, TRUE);
+                    } else {
+                        // 新节点是订阅节点，覆盖到订阅节点
+                        SaveNodeConfig(fileIndex, FALSE);
+                    }
+                    
+                    // 更新列表显示
+                    SendMessage(hNodeList, LB_DELETESTRING, existingIndex, 0);
+                    SendMessage(hNodeList, LB_INSERTSTRING, existingIndex, (LPARAM)nodeName);
+                } else {
+                    // 不存在同名节点，新增
+                    if (isManualNode) {
+                        SaveNodeConfig(g_manualNodeCount, TRUE);
+                        g_manualNodeCount++;
+                    } else {
+                        SaveNodeConfig(g_totalNodeCount, FALSE);
+                        g_totalNodeCount++;
+                    }
+                    SendMessage(hNodeList, LB_ADDSTRING, 0, (LPARAM)nodeName);
+                    newNodesCount++;
+                }
+            }   
+
         }
         line = strtok(NULL, "\r\n");
     }
