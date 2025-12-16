@@ -292,7 +292,7 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam) 
             LoadManualNodeList();
             break;
 
-        case WM_SIZE: {
+case WM_SIZE: {
             if (wParam == SIZE_MINIMIZED) break;
             
             RECT rect;
@@ -301,29 +301,91 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam) 
             int winH = rect.bottom;
             int margin = Scale(15);
             
-            HDWP hdwp = BeginDeferWindowPos(20);
+            // 计算各区域高度
+            int btnH = Scale(38);
+            int logLabelH = Scale(25);
+            int minLogH = Scale(80);
+            int buttonBarH = btnH + Scale(10);
+            int logSectionH = logLabelH + minLogH + margin;
             
-            // 节点列表区域
-            int curY = margin;
-            int nodeListH = winH - Scale(280);
+            // 节点列表区域高度 = 总高度 - 按钮栏 - 日志区域 - 上下边距
+            int nodeListH = winH - buttonBarH - logSectionH - margin * 2;
             if (nodeListH < Scale(300)) nodeListH = Scale(300);
             
+            HDWP hdwp = BeginDeferWindowPos(20);
+            
+            // ========== 节点列表组框 ==========
+            int curY = margin;
             HWND hGroupNode = GetDlgItem(hwnd, 5001);
             if (hGroupNode) {
                 DeferWindowPos(hdwp, hGroupNode, NULL, margin, curY, 
                     winW - margin * 2, nodeListH, SWP_NOZORDER);
             }
             
-            // 按钮栏
-            curY += nodeListH + Scale(10);
-            int btnH = Scale(38);
+            // ========== 节点列表框 ==========
+            if (hNodeList) {
+                int innerY = curY + Scale(25);
+                int btnH2 = Scale(30);
+                // 计算列表框的Y位置：组框顶部 + 标题 + 第一行按钮 + 间距 + 标签文字
+                int nodeListY = innerY + btnH2 + Scale(10) + Scale(25);
+                int nodeListHeight = nodeListH - (nodeListY - curY) - Scale(12);
+                
+                DeferWindowPos(hdwp, hNodeList, NULL, 
+                    margin + Scale(12), nodeListY, 
+                    winW - margin * 2 - Scale(24), nodeListHeight, 
+                    SWP_NOZORDER);
+            }
             
-            // 日志区域填充剩余空间
+            // ========== 按钮栏 ==========
+            curY += nodeListH + Scale(10);
+            int btnW = Scale(120);
+            int startX = margin;
+            
+            // 启动代理按钮
+            if (hStartBtn) {
+                DeferWindowPos(hdwp, hStartBtn, NULL, startX, curY, btnW, btnH, SWP_NOZORDER);
+            }
+            
+            // 停止按钮
+            if (hStopBtn) {
+                DeferWindowPos(hdwp, hStopBtn, NULL, 
+                    startX + btnW + Scale(15), curY, btnW, btnH, SWP_NOZORDER);
+            }
+            
+            // 删除全部按钮
+            if (hDelAllBtn) {
+                DeferWindowPos(hdwp, hDelAllBtn, NULL, 
+                    startX + (btnW + Scale(15)) * 2, curY, btnW, btnH, SWP_NOZORDER);
+            }
+            
+            // 复制全部按钮
+            if (hCopyAllBtn) {
+                DeferWindowPos(hdwp, hCopyAllBtn, NULL, 
+                    startX + (btnW + Scale(15)) * 3, curY, btnW, btnH, SWP_NOZORDER);
+            }
+            
+            // 粘贴节点按钮
+            if (hPasteNodeBtn) {
+                DeferWindowPos(hdwp, hPasteNodeBtn, NULL, 
+                    startX + (btnW + Scale(15)) * 4, curY, btnW, btnH, SWP_NOZORDER);
+            }
+            
+            // 清空日志按钮（右对齐）
+            HWND hClrBtn = GetDlgItem(hwnd, ID_CLEAR_LOG_BTN);
+            if (hClrBtn) {
+                DeferWindowPos(hdwp, hClrBtn, NULL, 
+                    winW - margin - btnW, curY, btnW, btnH, SWP_NOZORDER);
+            }
+            
+            // ========== 日志区域 ==========
             curY += btnH + Scale(10);
-            int logLabelH = Scale(25);
+            
+            // 日志标签（可选调整，因为静态文本通常不需要精确调整）
             curY += logLabelH;
+            
+            // 日志编辑框 - 自适应填充剩余空间
             int logH = winH - curY - margin;
-            if (logH < Scale(80)) logH = Scale(80);
+            if (logH < minLogH) logH = minLogH;
             
             if (hLogEdit) {
                 DeferWindowPos(hdwp, hLogEdit, NULL, margin, curY, 
@@ -476,6 +538,7 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam) 
     }
     return 0;
 }
+
 // ============ 第四部分:控件创建 ============
 
 void CreateControls(HWND hwnd) {
@@ -497,7 +560,7 @@ void CreateControls(HWND hwnd) {
     
     int innerY = curY + Scale(25);
 
-    // 节点操作按钮 - 第一行
+    // 节点操作按钮 - 第一行（保留在组框内）
     int btnY = innerY;
     int btnX = margin + Scale(12);
     int btnW = Scale(100);
@@ -516,29 +579,12 @@ void CreateControls(HWND hwnd) {
         btnX + (btnW + btnGap) * 2, btnY, btnW, btnH, hwnd, (HMENU)ID_DEL_NODE_BTN, NULL, NULL);
     SendMessage(hDelNodeBtn, WM_SETFONT, (WPARAM)hFontUI, TRUE);
 
-    // 新增按钮 - 删除全部
-    hDelAllBtn = CreateWindow("BUTTON", "删除全部", WS_VISIBLE | WS_CHILD | BS_PUSHBUTTON,
-        btnX + (btnW + btnGap) * 3, btnY, btnW, btnH, hwnd, (HMENU)ID_DEL_ALL_BTN, NULL, NULL);
-    SendMessage(hDelAllBtn, WM_SETFONT, (WPARAM)hFontUI, TRUE);
-
-    // 节点操作按钮 - 第二行
-    btnY += btnH + Scale(8);
-
-    // 新增按钮 - 复制全部
-    hCopyAllBtn = CreateWindow("BUTTON", "复制全部", WS_VISIBLE | WS_CHILD | BS_PUSHBUTTON,
-        btnX, btnY, btnW, btnH, hwnd, (HMENU)ID_COPY_ALL_BTN, NULL, NULL);
-    SendMessage(hCopyAllBtn, WM_SETFONT, (WPARAM)hFontUI, TRUE);
-
-    // 新增按钮 - 粘贴节点
-    hPasteNodeBtn = CreateWindow("BUTTON", "粘贴节点", WS_VISIBLE | WS_CHILD | BS_PUSHBUTTON,
-        btnX + btnW + btnGap, btnY, btnW, btnH, hwnd, (HMENU)ID_PASTE_NODE_BTN, NULL, NULL);
-    SendMessage(hPasteNodeBtn, WM_SETFONT, (WPARAM)hFontUI, TRUE);
-
-    // 订阅管理按钮
+    // 订阅管理按钮（移到第一行第四个位置）
     hSubManageBtn = CreateWindow("BUTTON", "订阅管理", WS_VISIBLE | WS_CHILD | BS_PUSHBUTTON,
-        btnX + (btnW + btnGap) * 2, btnY, btnW, btnH, hwnd, (HMENU)ID_SUB_MANAGE_BTN, NULL, NULL);
+        btnX + (btnW + btnGap) * 3, btnY, btnW, btnH, hwnd, (HMENU)ID_SUB_MANAGE_BTN, NULL, NULL);
     SendMessage(hSubManageBtn, WM_SETFONT, (WPARAM)hFontUI, TRUE);
 
+    // 第二行不再需要按钮，直接到标签
     innerY = btnY + btnH + Scale(10);
     
     HWND hNodeLabel = CreateWindow("STATIC", "双击节点可启动代理:", WS_VISIBLE | WS_CHILD | SS_LEFT, 
@@ -547,12 +593,12 @@ void CreateControls(HWND hwnd) {
     
     hNodeList = CreateWindow("LISTBOX", "", WS_VISIBLE | WS_CHILD | WS_BORDER | WS_VSCROLL | LBS_NOTIFY,
         margin + Scale(12), innerY + Scale(25), groupW - Scale(24), 
-        nodeListH - Scale(133), hwnd, (HMENU)ID_NODE_LIST, NULL, NULL);
+        nodeListH - Scale(73), hwnd, (HMENU)ID_NODE_LIST, NULL, NULL);
     SendMessage(hNodeList, WM_SETFONT, (WPARAM)hFontUI, TRUE);
 
     curY += nodeListH + Scale(10);
 
-    // ========== 按钮栏 ==========
+    // ========== 按钮栏 - 单行布局 ==========
     btnW = Scale(120);
     btnH = Scale(38);
     int startX = margin;
@@ -566,6 +612,22 @@ void CreateControls(HWND hwnd) {
     SendMessage(hStopBtn, WM_SETFONT, (WPARAM)hFontUI, TRUE);
     EnableWindow(hStopBtn, FALSE);
 
+    // 删除全部按钮（移到停止按钮右边）
+    hDelAllBtn = CreateWindow("BUTTON", "删除全部", WS_VISIBLE | WS_CHILD | BS_PUSHBUTTON,
+        startX + (btnW + Scale(15)) * 2, curY, btnW, btnH, hwnd, (HMENU)ID_DEL_ALL_BTN, NULL, NULL);
+    SendMessage(hDelAllBtn, WM_SETFONT, (WPARAM)hFontUI, TRUE);
+
+    // 复制全部按钮
+    hCopyAllBtn = CreateWindow("BUTTON", "复制全部", WS_VISIBLE | WS_CHILD | BS_PUSHBUTTON,
+        startX + (btnW + Scale(15)) * 3, curY, btnW, btnH, hwnd, (HMENU)ID_COPY_ALL_BTN, NULL, NULL);
+    SendMessage(hCopyAllBtn, WM_SETFONT, (WPARAM)hFontUI, TRUE);
+
+    // 粘贴节点按钮
+    hPasteNodeBtn = CreateWindow("BUTTON", "粘贴节点", WS_VISIBLE | WS_CHILD | BS_PUSHBUTTON,
+        startX + (btnW + Scale(15)) * 4, curY, btnW, btnH, hwnd, (HMENU)ID_PASTE_NODE_BTN, NULL, NULL);
+    SendMessage(hPasteNodeBtn, WM_SETFONT, (WPARAM)hFontUI, TRUE);
+
+    // 清空日志按钮（右对齐）
     HWND hClrBtn = CreateWindow("BUTTON", "清空日志", WS_VISIBLE | WS_CHILD | BS_PUSHBUTTON,
         winW - margin - btnW, curY, btnW, btnH, hwnd, (HMENU)ID_CLEAR_LOG_BTN, NULL, NULL);
     SendMessage(hClrBtn, WM_SETFONT, (WPARAM)hFontUI, TRUE);
