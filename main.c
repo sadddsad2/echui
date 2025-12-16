@@ -14,7 +14,7 @@
 
 typedef BOOL (WINAPI *SetProcessDPIAwareFunc)(void);
 
-#define APP_VERSION "2.1"
+#define APP_VERSION "3.1"
 #define APP_TITLE "ECH 客户端 v" APP_VERSION
 
 #define MAX_URL_LEN 8192
@@ -113,7 +113,7 @@ Config currentConfig = {
     "默认配置", NODE_TYPE_ECHW, 
     "dns.alidns.com/dns-query", "cloudflare-ech.com", 
     "example.com:443", "", "127.0.0.1:30000", 
-    3, 0, ""
+    6, 0, ""
 };
 
 // 用于对话框的临时配置和编辑索引
