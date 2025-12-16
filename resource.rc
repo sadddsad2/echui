@@ -4,7 +4,7 @@
 // 定义图标资源ID
 #define IDI_APP_ICON 101
 
-// 编辑节点对话框 (缩小尺寸)
+// 编辑节点对话框
 1 DIALOGEX 0, 0, 450, 420
 STYLE DS_MODALFRAME | WS_POPUP | WS_CAPTION | WS_SYSMENU
 CAPTION "修改节点配置"
@@ -12,7 +12,7 @@ FONT 9, "Microsoft YaHei UI"
 BEGIN
 END
 
-// 添加节点对话框 (缩小尺寸)
+// 添加节点对话框
 2 DIALOGEX 0, 0, 450, 420
 STYLE DS_MODALFRAME | WS_POPUP | WS_CAPTION | WS_SYSMENU
 CAPTION "添加新节点"
@@ -20,7 +20,7 @@ FONT 9, "Microsoft YaHei UI"
 BEGIN
 END
 
-// 订阅管理对话框 (新增)
+// 订阅管理对话框
 3 DIALOGEX 0, 0, 580, 380
 STYLE DS_MODALFRAME | WS_POPUP | WS_CAPTION | WS_SYSMENU
 CAPTION "订阅管理"
