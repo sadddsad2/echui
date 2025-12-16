@@ -1,13 +1,11 @@
 // ============ 第一部分:头文件、宏定义、全局变量、函数声明 ============
-#pragma comment(linker,"\"/manifestdependency:type='win32' name='Microsoft.Windows.Common-Controls' version='6.0.0.0' processorArchitecture='*' publicKeyToken='6595b64144ccf1df' language='*'\"")
-#pragma comment(lib, "ws2_32.lib")
-
+// 注意: winsock2.h 必须在 windows.h 之前包含
+#include <winsock2.h>
+#include <ws2tcpip.h>
 #include <windows.h>
 #include <commctrl.h>
 #include <shellapi.h>
 #include <wininet.h>
-#include <winsock2.h>
-#include <ws2tcpip.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -140,7 +138,7 @@ Config currentConfig = {
     "默认配置", NODE_TYPE_ECHW, 
     "dns.alidns.com/dns-query", "cloudflare-ech.com", 
     "example.com:443", "", "127.0.0.1:30001", 
-    8, 0, ""
+    3, 0, ""
 };
 
 Config tempConfig;
@@ -1208,6 +1206,12 @@ void HandleSocks5Client(SOCKET clientSock) {
     closesocket(clientSock);
 }
 
+DWORD WINAPI Socks5ClientHandlerThread(LPVOID lpParam) {
+    SOCKET clientSock = (SOCKET)(uintptr_t)lpParam;
+    HandleSocks5Client(clientSock);
+    return 0;
+}
+
 DWORD WINAPI Socks5ProxyThread(LPVOID lpParam) {
     (void)lpParam;
     
@@ -1222,8 +1226,8 @@ DWORD WINAPI Socks5ProxyThread(LPVOID lpParam) {
         
         // 为每个客户端创建线程
         HANDLE hThread = CreateThread(NULL, 0, 
-            (LPTHREAD_START_ROUTINE)HandleSocks5Client, 
-            (LPVOID)clientSock, 0, NULL);
+            Socks5ClientHandlerThread, 
+            (LPVOID)(uintptr_t)clientSock, 0, NULL);
         if (hThread) {
             CloseHandle(hThread);
         } else {
@@ -1384,7 +1388,7 @@ void DownloadChinaIPList() {
     
     if (totalRead > 0) {
         char msg[128];
-        snprintf(msg, sizeof(msg), "[IP列表] 下载完成,共 %u 字节\r\n", totalRead);
+        snprintf(msg, sizeof(msg), "[IP列表] 下载完成,共 %lu 字节\r\n", (unsigned long)totalRead);
         AppendLog(msg);
         MessageBox(hMainWindow, "中国IP列表下载成功", "成功", MB_OK | MB_ICONINFORMATION);
     } else {
@@ -1399,6 +1403,7 @@ void ShowSubManageDialog() {
 }
 
 INT_PTR CALLBACK SubManageDialogProc(HWND hwndDlg, UINT uMsg, WPARAM wParam, LPARAM lParam) {
+    (void)lParam; // 未使用的参数
     static HWND hSubUrlEdit, hSubList;
     
     switch (uMsg) {
@@ -1721,6 +1726,7 @@ void UpdateControlsForNodeType(HWND hwndDlg, NodeType type) {
 // ============ 第九部分:编辑和添加节点对话框处理 ============
 
 INT_PTR CALLBACK EditNodeDialogProc(HWND hwndDlg, UINT uMsg, WPARAM wParam, LPARAM lParam) {
+    (void)lParam; // 未使用的参数
     switch (uMsg) {
         case WM_INITDIALOG: {
             SetWindowText(hwndDlg, "修改节点配置");
@@ -1823,6 +1829,7 @@ INT_PTR CALLBACK EditNodeDialogProc(HWND hwndDlg, UINT uMsg, WPARAM wParam, LPAR
 }
 
 INT_PTR CALLBACK AddNodeDialogProc(HWND hwndDlg, UINT uMsg, WPARAM wParam, LPARAM lParam) {
+    (void)lParam; // 未使用的参数
     switch (uMsg) {
         case WM_INITDIALOG: {
             SetWindowText(hwndDlg, "添加新节点");
