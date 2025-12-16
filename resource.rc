@@ -1,1 +1,21 @@
-101 ICON "logo.ico"
+// resource.rc - 对话框资源定义
+#include <windows.h>
+
+// 编辑节点对话框
+1 DIALOGEX 0, 0, 500, 460
+STYLE DS_MODALFRAME | WS_POPUP | WS_CAPTION | WS_SYSMENU
+CAPTION "修改节点配置"
+FONT 9, "Microsoft YaHei UI"
+BEGIN
+END
+
+// 添加节点对话框
+2 DIALOGEX 0, 0, 500, 460
+STYLE DS_MODALFRAME | WS_POPUP | WS_CAPTION | WS_SYSMENU
+CAPTION "添加新节点"
+FONT 9, "Microsoft YaHei UI"
+BEGIN
+END
+
+// 图标资源
+IDI_APP_ICON ICON "icon.ico"
