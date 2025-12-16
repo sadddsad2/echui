@@ -34,7 +34,7 @@ jobs:
       run: |
         mkdir -p ./release
         windres resource.rc -o resource.o
-        gcc -Wall -Wextra -std=c99 -finput-charset=UTF-8 -fexec-charset=GBK -Os -s -o ./release/ech-workers-gui.exe resource.o main.c -lwininet -luser32 -lkernel32 -lcomctl32 -lgdi32 -mwindows
+        gcc -Wall -mwindows -Wextra -std=c99 -finput-charset=UTF-8 -fexec-charset=GBK -Os -s -o ./release/ech-workers-gui.exe resource.o main.c -lws2_32 -lcomctl32 -lwininet -lgdi32 -luser32 -lkernel32 -lshell32
     
     - name: Create Release
       uses: softprops/action-gh-release@v1
