@@ -2239,6 +2239,65 @@ BOOL IsUTF8File(const char* fileName) {
     
     return FALSE;
 }
+// 检查是否是 Emoji 字符（4字节 UTF-8）
+BOOL IsEmojiChar(const unsigned char* str) {
+    // Emoji 主要在 U+1F000 到 U+1FFFF 范围
+    // UTF-8 编码：0xF0 0x9F ...
+    if (str[0] == 0xF0 && str[1] == 0x9F) {
+        return TRUE;
+    }
+    return FALSE;
+}
+
+// 获取 UTF-8 字符的字节长度
+int GetUTF8CharLen(const unsigned char* str) {
+    if (str[0] < 0x80) return 1;           // 单字节 ASCII
+    if ((str[0] & 0xE0) == 0xC0) return 2; // 2字节
+    if ((str[0] & 0xF0) == 0xE0) return 3; // 3字节
+    if ((str[0] & 0xF8) == 0xF0) return 4; // 4字节（Emoji）
+    return 1;
+}
+
+// 移除 UTF-8 字符串开头的所有 Emoji（返回 UTF-8）
+char* RemoveLeadingEmojiUTF8(const char* utf8Str) {
+    if (!utf8Str || strlen(utf8Str) == 0) return strdup("");
+    
+    const unsigned char* p = (const unsigned char*)utf8Str;
+    
+    // 跳过所有开头的 Emoji 和空格
+    while (*p) {
+        if (IsEmojiChar(p)) {
+            // 跳过 Emoji（国旗是8字节：两个4字节字符）
+            int charLen = GetUTF8CharLen(p);
+            p += charLen;
+            
+            // 如果是国旗（连续两个4字节），再跳过一个
+            if (charLen == 4 && IsEmojiChar(p)) {
+                p += GetUTF8CharLen(p);
+            }
+        } else if (*p == ' ' || *p == '\t') {
+            // 跳过空格
+            p++;
+        } else {
+            // 遇到普通字符，停止
+            break;
+        }
+    }
+    
+    return strdup((const char*)p);
+}
+
+// 移除 UTF-8 字符串开头的所有 Emoji（返回 GBK）
+char* RemoveLeadingEmoji(const char* utf8Str) {
+    char* utf8Result = RemoveLeadingEmojiUTF8(utf8Str);
+    if (!utf8Result) return strdup("");
+    
+    char* gbkResult = UTF8ToGBK(utf8Result);
+    free(utf8Result);
+    
+    return gbkResult ? gbkResult : strdup("");
+}
+
 // ============ 第十一部分:Base64编码解码 ============
 
 char* base64_decode(const char* input, size_t* out_len) {
@@ -2430,31 +2489,32 @@ void ParseSubscriptionData(const char* data) {
             int fallback = 0;
             
             char* nameStart = strchr(line, '#');
-            if (nameStart) {
-                char* urlDecoded = URLDecode(nameStart + 1);
-                if (urlDecoded) {
-                    size_t decLen = strlen(urlDecoded);
-                    while (decLen > 0 && (urlDecoded[decLen-1] == ' ' || urlDecoded[decLen-1] == '\t')) {
-                        urlDecoded[--decLen] = '\0';
-                    }
-                    
-                    char* gbkName = UTF8ToGBK(urlDecoded);
-                    if (gbkName) {
-                        size_t copyLen = strlen(gbkName);
-                        if (copyLen >= MAX_SMALL_LEN) {
-                            copyLen = MAX_SMALL_LEN - 1;
-                            while (copyLen > 0 && (unsigned char)gbkName[copyLen-1] >= 0x80) {
-                                copyLen--;
-                            }
-                        }
-                        memcpy(nodeName, gbkName, copyLen);
-                        nodeName[copyLen] = '\0';
-                        free(gbkName);
-                    }
-                    free(urlDecoded);
+if (nameStart) {
+    char* urlDecoded = URLDecode(nameStart + 1);
+    if (urlDecoded) {
+        size_t decLen = strlen(urlDecoded);
+        while (decLen > 0 && (urlDecoded[decLen-1] == ' ' || urlDecoded[decLen-1] == '\t')) {
+            urlDecoded[--decLen] = '\0';
+        }
+        
+        // ?? 移除开头的 Emoji，直接转换为 GBK
+        char* processedName = RemoveLeadingEmoji(urlDecoded);
+        if (processedName) {
+            size_t copyLen = strlen(processedName);
+            if (copyLen >= MAX_SMALL_LEN) {
+                copyLen = MAX_SMALL_LEN - 1;
+                while (copyLen > 0 && (unsigned char)processedName[copyLen-1] >= 0x80) {
+                    copyLen--;
                 }
-                *nameStart = '\0';
             }
+            memcpy(nodeName, processedName, copyLen);
+            nodeName[copyLen] = '\0';
+            free(processedName);
+        }
+        free(urlDecoded);
+    }
+    *nameStart = '\0';
+}
             
             char* p = parseStart;
             int partIndex = 0;
