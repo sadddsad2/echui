@@ -173,6 +173,7 @@ char* base64_decode(const char* input, size_t* out_len);
 char* base64_encode(const unsigned char* input, size_t len);  // 新增：Base64编码
 BOOL is_base64_encoded(const char* data);
 char* GenerateNodeLink(int nodeIndex);  // 新增：生成节点链接
+char* ConvertListenAddress(const char* listen);
 // ============ 第二部分:主函数和托盘图标 ============
 
 int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine, int nCmdShow) {
@@ -1894,8 +1895,44 @@ char* GenerateNodeLink(int nodeIndex) {
     }
     // XECH类型 (新增): xech://server|token|ip|dns|ech|connections|fallback|block|ips#name
     else if (nodeConfig.nodeType == NODE_TYPE_XECH) {
-        snprintf(link, MAX_URL_LEN * 2, "xech://%s|%s|%s|%s|%s|%d|%d|%s|%s#%s",
+        // ========== 简化listen地址用于生成链接 ==========
+        char simplifiedListen[MAX_SMALL_LEN] = {0};
+        
+        // 从完整listen格式中提取简化格式
+        // 例如：socks5://127.0.0.1:30000,http://127.0.0.1:30001 -> 127.0.0.1:30000
+        const char* listenStr = nodeConfig.listen;
+        
+        // 查找socks5://后面的部分
+        const char* socks5Prefix = strstr(listenStr, "socks5://");
+        if (socks5Prefix) {
+            const char* addrStart = socks5Prefix + 9;  // 跳过"socks5://"
+            const char* commaPos = strchr(addrStart, ',');
+            
+            size_t len;
+            if (commaPos) {
+                len = commaPos - addrStart;
+            } else {
+                len = strlen(addrStart);
+            }
+            
+            if (len > 0 && len < MAX_SMALL_LEN) {
+                strncpy(simplifiedListen, addrStart, len);
+                simplifiedListen[len] = '\0';
+            }
+        } else {
+            // 如果没有socks5://前缀，直接使用原值
+            strcpy(simplifiedListen, listenStr);
+        }
+        
+        // 如果简化后为空，使用默认值
+        if (strlen(simplifiedListen) == 0) {
+            strcpy(simplifiedListen, "127.0.0.1:30000");
+        }
+        
+        // 生成链接：注意listen参数位置调整到第二个
+        snprintf(link, MAX_URL_LEN * 2, "xech://%s|%s|%s|%s|%s|%s|%d|%d|%s|%s#%s",
             nodeConfig.server,
+            simplifiedListen,    // 使用简化的listen
             nodeConfig.token,
             nodeConfig.ip,
             nodeConfig.dns,
@@ -1906,7 +1943,6 @@ char* GenerateNodeLink(int nodeIndex) {
             nodeConfig.ips,
             encodedName ? encodedName : nodeConfig.configName);
     }
-    
     if (utf8Name) free(utf8Name);
     if (encodedName) free(encodedName);
     
@@ -2430,7 +2466,53 @@ char* URLEncode(const char* str) {
     
     return encoded;
 }
-
+char* ConvertListenAddress(const char* listen) {
+    if (!listen || strlen(listen) == 0) {
+        return strdup("socks5://127.0.0.1:30000,http://127.0.0.1:30001");  // 默认值
+    }
+    
+    // 如果已经包含协议头，直接返回
+    if (strstr(listen, "://") != NULL) {
+        return strdup(listen);
+    }
+    
+    // 解析IP和端口
+    char ip[256] = {0};
+    int port = 0;
+    
+    const char* colonPos = strchr(listen, ':');
+    if (colonPos) {
+        // 提取IP部分
+        size_t ipLen = colonPos - listen;
+        if (ipLen >= sizeof(ip)) ipLen = sizeof(ip) - 1;
+        strncpy(ip, listen, ipLen);
+        ip[ipLen] = '\0';
+        
+        // 提取端口
+        port = atoi(colonPos + 1);
+        if (port <= 0 || port > 65535) {
+            port = 30000;  // 无效端口，使用默认值
+        }
+    } else {
+        // 没有端口，使用默认
+        strcpy(ip, "127.0.0.1");
+        port = 30000;
+    }
+    
+    // 如果IP为空，使用默认
+    if (strlen(ip) == 0) {
+        strcpy(ip, "127.0.0.1");
+    }
+    
+    // 构建结果：socks5://ip:port,http://ip:port+1
+    char* result = (char*)malloc(512);
+    if (!result) return strdup(listen);
+    
+    snprintf(result, 512, "socks5://%s:%d,http://%s:%d", 
+             ip, port, ip, port + 1);
+    
+    return result;
+}
 BOOL IsUTF8File(const char* fileName) {
     FILE* f = fopen(fileName, "rb");
     if (!f) return FALSE;
@@ -2697,17 +2779,18 @@ void ParseSubscriptionData(const char* data) {
                 continue;
             }
             
-            // 初始化配置变量
+            // 初始化配置变量（使用默认值）
             char nodeName[MAX_SMALL_LEN] = {0};
             char server[MAX_URL_LEN] = {0};
+            char listen[MAX_SMALL_LEN] = "127.0.0.1:30000";      // 新增listen变量
             char token[MAX_URL_LEN] = {0};
             char ip[MAX_SMALL_LEN] = {0};
-            char dns[MAX_SMALL_LEN] = {0};
-            char ech[MAX_SMALL_LEN] = {0};
-            int connections = (nodeType == NODE_TYPE_XECH) ? 4 : 3;  // xech默认4个连接
+            char dns[MAX_SMALL_LEN] = "dns.alidns.com/dns-query";
+            char ech[MAX_SMALL_LEN] = "cloudflare-ech.com";
+            int connections = (nodeType == NODE_TYPE_XECH) ? 4 : 3;
             int fallback = 0;
-            char block[MAX_SMALL_LEN] = "443";    // 新增：默认值
-            char ips[32] = "";                    // 新增：默认值
+            char block[MAX_SMALL_LEN] = "443";
+            char ips[32] = "";
             
             // 提取节点名称
             char* nameStart = strchr(line, '#');
@@ -2747,36 +2830,108 @@ void ParseSubscriptionData(const char* data) {
                 if (*p == '|' || *(p + 1) == '\0') {
                     size_t len = (*p == '|') ? (size_t)(p - start) : (size_t)(p - start + 1);
                     
-                    if (partIndex == 0 && len > 0 && len < MAX_URL_LEN) {
-                        strncpy(server, start, len);
-                        server[len] = '\0';
-                    } else if (partIndex == 1 && len > 0 && len < MAX_URL_LEN) {
-                        strncpy(token, start, len);
-                        token[len] = '\0';
-                    } else if (partIndex == 2 && len > 0 && len < MAX_SMALL_LEN) {
-                        strncpy(ip, start, len);
-                        ip[len] = '\0';
-                    } else if (partIndex == 3 && len > 0 && len < MAX_SMALL_LEN) {
-                        strncpy(dns, start, len);
-                        dns[len] = '\0';
-                    } else if (partIndex == 4 && len > 0 && len < MAX_SMALL_LEN) {
-                        strncpy(ech, start, len);
-                        ech[len] = '\0';
-                    } else if (partIndex == 5 && len > 0) {
-                        char connStr[16] = {0};
-                        strncpy(connStr, start, len < 16 ? len : 15);
-                        connections = atoi(connStr);
-                        if (connections < 1) connections = 1;
-                    } else if (partIndex == 6 && len > 0) {
-                        char fallStr[16] = {0};
-                        strncpy(fallStr, start, len < 16 ? len : 15);
-                        fallback = atoi(fallStr);
-                    } else if (partIndex == 7 && len > 0 && len < MAX_SMALL_LEN) {  // 新增：block参数
-                        strncpy(block, start, len);
-                        block[len] = '\0';
-                    } else if (partIndex == 8 && len > 0 && len < 32) {  // 新增：ips参数
-                        strncpy(ips, start, len);
-                        ips[len] = '\0';
+                    // 根据nodeType和partIndex决定参数含义
+                    if (nodeType == NODE_TYPE_XECH) {
+                        // XECH格式: server|listen|token|ip|dns|ech|connections|fallback|block|ips
+                        if (partIndex == 0) {  // server（必需）
+                            if (len > 0 && len < MAX_URL_LEN) {
+                                strncpy(server, start, len);
+                                server[len] = '\0';
+                            }
+                        } else if (partIndex == 1) {  // listen（可选，有默认值）
+                            if (len > 0 && len < MAX_SMALL_LEN) {
+                                strncpy(listen, start, len);
+                                listen[len] = '\0';
+                            }
+                        } else if (partIndex == 2) {  // token（可选）
+                            if (len > 0 && len < MAX_URL_LEN) {
+                                strncpy(token, start, len);
+                                token[len] = '\0';
+                            }
+                        } else if (partIndex == 3) {  // ip（可选）
+                            if (len > 0 && len < MAX_SMALL_LEN) {
+                                strncpy(ip, start, len);
+                                ip[len] = '\0';
+                            }
+                        } else if (partIndex == 4) {  // dns（可选，有默认值）
+                            if (len > 0 && len < MAX_SMALL_LEN) {
+                                strncpy(dns, start, len);
+                                dns[len] = '\0';
+                            }
+                        } else if (partIndex == 5) {  // ech（可选，有默认值）
+                            if (len > 0 && len < MAX_SMALL_LEN) {
+                                strncpy(ech, start, len);
+                                ech[len] = '\0';
+                            }
+                        } else if (partIndex == 6) {  // connections（可选，有默认值）
+                            if (len > 0) {
+                                char connStr[16] = {0};
+                                strncpy(connStr, start, len < 16 ? len : 15);
+                                int conn = atoi(connStr);
+                                if (conn >= 1 && conn <= 20) {
+                                    connections = conn;
+                                }
+                            }
+                        } else if (partIndex == 7) {  // fallback（可选，有默认值）
+                            if (len > 0) {
+                                char fallStr[16] = {0};
+                                strncpy(fallStr, start, len < 16 ? len : 15);
+                                fallback = atoi(fallStr);
+                            }
+                        } else if (partIndex == 8) {  // block（可选，有默认值）
+                            if (len > 0 && len < MAX_SMALL_LEN) {
+                                strncpy(block, start, len);
+                                block[len] = '\0';
+                            }
+                        } else if (partIndex == 9) {  // ips（可选，有默认值）
+                            if (len > 0 && len < 32) {
+                                strncpy(ips, start, len);
+                                ips[len] = '\0';
+                            }
+                        }
+                    } else {
+                        // ECH和ECHW的原有逻辑保持不变
+                        if (partIndex == 0) {  // server（必需）
+                            if (len > 0 && len < MAX_URL_LEN) {
+                                strncpy(server, start, len);
+                                server[len] = '\0';
+                            }
+                        } else if (partIndex == 1) {  // token（可选）
+                            if (len > 0 && len < MAX_URL_LEN) {
+                                strncpy(token, start, len);
+                                token[len] = '\0';
+                            }
+                        } else if (partIndex == 2) {  // ip（可选）
+                            if (len > 0 && len < MAX_SMALL_LEN) {
+                                strncpy(ip, start, len);
+                                ip[len] = '\0';
+                            }
+                        } else if (partIndex == 3) {  // dns（可选，有默认值）
+                            if (len > 0 && len < MAX_SMALL_LEN) {
+                                strncpy(dns, start, len);
+                                dns[len] = '\0';
+                            }
+                        } else if (partIndex == 4) {  // ech（可选，有默认值）
+                            if (len > 0 && len < MAX_SMALL_LEN) {
+                                strncpy(ech, start, len);
+                                ech[len] = '\0';
+                            }
+                        } else if (partIndex == 5 && nodeType == NODE_TYPE_ECH) {  // connections（仅ECH）
+                            if (len > 0) {
+                                char connStr[16] = {0};
+                                strncpy(connStr, start, len < 16 ? len : 15);
+                                int conn = atoi(connStr);
+                                if (conn >= 1 && conn <= 20) {
+                                    connections = conn;
+                                }
+                            }
+                        } else if (partIndex == 6 && nodeType == NODE_TYPE_ECH) {  // fallback（仅ECH）
+                            if (len > 0) {
+                                char fallStr[16] = {0};
+                                strncpy(fallStr, start, len < 16 ? len : 15);
+                                fallback = atoi(fallStr);
+                            }
+                        }
                     }
                     
                     if (*p == '|') {
@@ -2787,9 +2942,9 @@ void ParseSubscriptionData(const char* data) {
                 p++;
             }
             
-            // 如果只有server没有其他参数，处理为纯server
-            if (partIndex == 0 && strlen(server) == 0) {
-                strncpy(server, start, MAX_URL_LEN - 1);
+            // 如果只有server没有任何|分隔符，特殊处理
+            if (partIndex == 0 && strlen(server) == 0 && strlen(parseStart) > 0) {
+                strncpy(server, parseStart, MAX_URL_LEN - 1);
                 server[MAX_URL_LEN - 1] = '\0';
             }
             
@@ -2815,24 +2970,25 @@ void ParseSubscriptionData(const char* data) {
                 strcpy(currentConfig.server, server);
                 strcpy(currentConfig.token, token);
                 strcpy(currentConfig.ip, ip);
-                
-                if (strlen(dns) == 0) {
-                    strcpy(currentConfig.dns, "dns.alidns.com/dns-query");
-                } else {
-                    strcpy(currentConfig.dns, dns);
-                }
-                
-                if (strlen(ech) == 0) {
-                    strcpy(currentConfig.ech, "cloudflare-ech.com");
-                } else {
-                    strcpy(currentConfig.ech, ech);
-                }
-                
+                strcpy(currentConfig.dns, dns);
+                strcpy(currentConfig.ech, ech);
                 currentConfig.connections = connections;
                 currentConfig.fallback = fallback;
-                strcpy(currentConfig.block, block);    // 新增
-                strcpy(currentConfig.ips, ips);        // 新增
+                strcpy(currentConfig.block, block);
+                strcpy(currentConfig.ips, ips);
                 
+                // ========== 处理监听地址 ==========
+                if (nodeType == NODE_TYPE_XECH) {
+                    // XECH类型：转换listen格式
+                    char* convertedListen = ConvertListenAddress(listen);
+                    if (convertedListen) {
+                        strcpy(currentConfig.listen, convertedListen);
+                        free(convertedListen);
+                    }
+                } else {
+                    // ECH和ECHW类型：保持原样
+                    strcpy(currentConfig.listen, "127.0.0.1:30000");
+                }
                 // 检查是否存在同名节点
                 int existingIndex = -1;
                 int totalCount = SendMessage(hNodeList, LB_GETCOUNT, 0, 0);
