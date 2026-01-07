@@ -2727,7 +2727,6 @@ BOOL is_base64_encoded(const char* data) {
 // ============ 第十二部分:订阅解析函数 ============
 
 // ============ 修改ParseSubscriptionData函数 ============
-// 在ParseSubscriptionData函数中，找到节点类型判断部分，修改为：
 
 void ParseSubscriptionData(const char* data) {
     if (!data || strlen(data) == 0) {
@@ -2977,18 +2976,29 @@ void ParseSubscriptionData(const char* data) {
                 strcpy(currentConfig.block, block);
                 strcpy(currentConfig.ips, ips);
                 
-                // ========== 处理监听地址 ==========
-                if (nodeType == NODE_TYPE_XECH) {
-                    // XECH类型：转换listen格式
-                    char* convertedListen = ConvertListenAddress(listen);
-                    if (convertedListen) {
-                        strcpy(currentConfig.listen, convertedListen);
-                        free(convertedListen);
-                    }
-                } else {
-                    // ECH和ECHW类型：保持原样
-                    strcpy(currentConfig.listen, "127.0.0.1:30000");
-                }
+
+               // ========== 处理监听地址 ==========
+               if (nodeType == NODE_TYPE_XECH) {
+                   // XECH类型：转换listen格式为 socks5://ip:port,http://ip:port+1
+                   char* convertedListen = ConvertListenAddress(listen);
+                   if (convertedListen) {
+                       strcpy(currentConfig.listen, convertedListen);
+                       free(convertedListen);
+                   }
+               } else {
+                   // ECH和ECHW类型：移除协议头，只保存纯IP:端口
+                   char* actualAddr = strstr(listen, "://");
+                   if (actualAddr) {
+                       actualAddr += 3;  // 跳过://
+                       strcpy(currentConfig.listen, actualAddr);
+                   } else {
+                       strcpy(currentConfig.listen, listen);
+                   }
+                   // 如果为空，使用默认值
+                   if (strlen(currentConfig.listen) == 0) {
+                       strcpy(currentConfig.listen, "127.0.0.1:30000");
+                   }
+               }
                 // 检查是否存在同名节点
                 int existingIndex = -1;
                 int totalCount = SendMessage(hNodeList, LB_GETCOUNT, 0, 0);
