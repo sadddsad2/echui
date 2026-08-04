@@ -1871,9 +1871,9 @@ char* GenerateNodeLink(int nodeIndex) {
     char* utf8Name = GBKToUTF8(nodeConfig.configName);
     char* encodedName = URLEncode(utf8Name ? utf8Name : nodeConfig.configName);
     
-    // ECH类型: ech://server|token|ip|dns|ech|connections|fallback#name
+    // ECH类型: ech://server|token|ip|dns|ech|connections|fallback&ech=fallback#name
     if (nodeConfig.nodeType == NODE_TYPE_ECH) {
-        snprintf(link, MAX_URL_LEN * 2, "ech://%s|%s|%s|%s|%s|%d|%d#%s",
+        snprintf(link, MAX_URL_LEN * 2, "ech://%s|%s|%s|%s|%s|%d|%d&ech=%d#%s",
             nodeConfig.server,
             nodeConfig.token,
             nodeConfig.ip,
@@ -1881,9 +1881,10 @@ char* GenerateNodeLink(int nodeIndex) {
             nodeConfig.ech,
             nodeConfig.connections,
             nodeConfig.fallback,
+            nodeConfig.fallback,
             encodedName ? encodedName : nodeConfig.configName);
     }
-    // ECHW类型: echw://server|token|ip|dns|ech#name
+    // ECHW类型: echw://server|token|ip|dns|ech#name（echw不支持&ech=参数，格式保持不变）
     else if (nodeConfig.nodeType == NODE_TYPE_ECHW) {
         snprintf(link, MAX_URL_LEN * 2, "echw://%s|%s|%s|%s|%s#%s",
             nodeConfig.server,
@@ -1893,7 +1894,7 @@ char* GenerateNodeLink(int nodeIndex) {
             nodeConfig.ech,
             encodedName ? encodedName : nodeConfig.configName);
     }
-    // XECH类型 (新增): xech://server|token|ip|dns|ech|connections|fallback|block|ips#name
+    // XECH类型 (新增): xech://server|token|ip|dns|ech|connections|fallback|block|ips&ech=fallback#name
     else if (nodeConfig.nodeType == NODE_TYPE_XECH) {
         // ========== 简化listen地址用于生成链接 ==========
         char simplifiedListen[MAX_SMALL_LEN] = {0};
@@ -1930,7 +1931,7 @@ char* GenerateNodeLink(int nodeIndex) {
         }
         
         // 生成链接：注意listen参数位置调整到第二个
-        snprintf(link, MAX_URL_LEN * 2, "xech://%s|%s|%s|%s|%s|%s|%d|%d|%s|%s#%s",
+        snprintf(link, MAX_URL_LEN * 2, "xech://%s|%s|%s|%s|%s|%s|%d|%d|%s|%s&ech=%d#%s",
             nodeConfig.server,
             simplifiedListen,    // 使用简化的listen
             nodeConfig.token,
@@ -1941,6 +1942,7 @@ char* GenerateNodeLink(int nodeIndex) {
             nodeConfig.fallback,
             nodeConfig.block,
             nodeConfig.ips,
+            nodeConfig.fallback,
             encodedName ? encodedName : nodeConfig.configName);
     }
     if (utf8Name) free(utf8Name);
@@ -2861,6 +2863,16 @@ void ParseSubscriptionData(const char* data) {
             if (echParamPos) {
                 urlDisableEch = atoi(echParamPos + 5);
                 *echParamPos = '\0';
+            }
+            
+            // ✅ 新增：echw 格式节点若携带 "&ech=" 参数，直接丢弃该节点（不予解析和添加）
+            if (nodeType == NODE_TYPE_ECHW && urlDisableEch >= 0) {
+                char logMsg[MAX_SMALL_LEN + 64];
+                snprintf(logMsg, sizeof(logMsg), "[节点] 跳过携带&ech=参数的echw节点: %s\r\n",
+                    strlen(nodeName) > 0 ? nodeName : line);
+                AppendLog(logMsg);
+                line = strtok(NULL, "\r\n");
+                continue;
             }
             
             // 解析参数部分
