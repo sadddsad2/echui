@@ -2575,14 +2575,48 @@ char* RemoveLeadingEmojiUTF8(const char* utf8Str) {
     return strdup((const char*)p);
 }
 
-// 移除 UTF-8 字符串开头的所有 Emoji（返回 GBK）
+// 移除 UTF-8 字符串结尾的所有 Emoji 和空格（返回 UTF-8）
+// 很多订阅节点名称会在末尾追加旗帜/火箭等 Emoji，若不去除，
+// 转换为 GBK 时该字符会被替换为一个不可显示的占位字符（方框），
+// 视觉上就像名字被截断了一样（例如 "xxx.com" 后面多出一个方框）。
+char* RemoveTrailingEmojiUTF8(const char* utf8Str) {
+    if (!utf8Str) return strdup("");
+    if (strlen(utf8Str) == 0) return strdup("");
+
+    char* result = strdup(utf8Str);
+    if (!result) return strdup("");
+
+    const unsigned char* p = (const unsigned char*)result;
+    size_t keepEnd = 0;   // 保留内容的长度（不含尾部 Emoji/空格）
+    size_t pos = 0;
+
+    while (p[pos]) {
+        int charLen = GetUTF8CharLen(p + pos);
+        BOOL isEmoji = IsEmojiChar(p + pos);
+        BOOL isSpace = (p[pos] == ' ' || p[pos] == '\t');
+
+        if (!isEmoji && !isSpace) {
+            keepEnd = pos + charLen;
+        }
+        pos += charLen;
+    }
+
+    result[keepEnd] = '\0';
+    return result;
+}
+
+// 移除 UTF-8 字符串开头和结尾的所有 Emoji（返回 GBK）
 char* RemoveLeadingEmoji(const char* utf8Str) {
-    char* utf8Result = RemoveLeadingEmojiUTF8(utf8Str);
-    if (!utf8Result) return strdup("");
-    
-    char* gbkResult = UTF8ToGBK(utf8Result);
-    free(utf8Result);
-    
+    char* noLeading = RemoveLeadingEmojiUTF8(utf8Str);
+    if (!noLeading) return strdup("");
+
+    char* noTrailing = RemoveTrailingEmojiUTF8(noLeading);
+    free(noLeading);
+    if (!noTrailing) return strdup("");
+
+    char* gbkResult = UTF8ToGBK(noTrailing);
+    free(noTrailing);
+
     return gbkResult ? gbkResult : strdup("");
 }
 
@@ -2820,6 +2854,15 @@ void ParseSubscriptionData(const char* data) {
                 *nameStart = '\0';
             }
             
+            // ✅ 新增：兼容 "&ech=1/0" 后缀格式（其他客户端生成的节点链接可能带有该参数，
+            // 表示是否禁用ECH，1=禁用，0=不禁用）。不存在该参数时保持原有解析逻辑不变。
+            int urlDisableEch = -1;
+            char* echParamPos = strstr(parseStart, "&ech=");
+            if (echParamPos) {
+                urlDisableEch = atoi(echParamPos + 5);
+                *echParamPos = '\0';
+            }
+            
             // 解析参数部分
             char* p = parseStart;
             int partIndex = 0;
@@ -2960,6 +3003,11 @@ void ParseSubscriptionData(const char* data) {
                     strncpy(nodeName, server, MAX_SMALL_LEN - 1);
                     nodeName[MAX_SMALL_LEN - 1] = '\0';
                 }
+            }
+            
+            // ✅ 新增：若链接携带 "&ech=" 参数，优先以它为准（覆盖位置参数解析出的 fallback 值）
+            if (urlDisableEch >= 0) {
+                fallback = urlDisableEch ? 1 : 0;
             }
             
             // 保存节点配置
